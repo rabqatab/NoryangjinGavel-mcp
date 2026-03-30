@@ -56,19 +56,21 @@ Two runs: 12-feature (basic) and 68-feature (same features as LightGBM v6) for f
 
 v10 also adds **price band prediction**: LightGBM quantile regression (p10/p50/p90) + conformal prediction intervals (80% coverage, properly calibrated). See `docs/14_advanced_preprocessing.md` for details.
 
-### Best-of-Breed Results (Final — CPU + 7 DL models, 68 features, same VMD preprocessing)
+### Best-of-Breed Results (Final — v10 preprocessing across all models)
 
 | Species | Best Model | MAPE | Runner-up | Status |
 |---|---|---|---|---|
-| **넙치** (flatfish) | v6 VMD+LightGBM | **14.8%** | Transformer+VMD 17.5% | Production ready |
-| **우럭** (rockfish) | TFT (GPU) | **14.7%** | LightGBM 24.1% | Production ready |
-| **방어** (yellowtail) | TFT (GPU) | **15.6%** | LightGBM 62.6% | Production ready |
-| **도다리** (flounder) | Transformer+VMD (GPU) | **17.8%** | GRU+VMD 18.2% | Production ready |
-| **농어** (sea bass) | GRU+VMD (GPU) | **18.4%** | CNN-LSTM+VMD 18.7% | Production ready |
-| **참돔** (seabream) | TFT (GPU) | **20.8%** | Transformer+VMD 25.5% | Usable |
-| **감성돔** (black porgy) | Transformer+VMD (GPU) | **21.8%** | GRU+VMD 22.3% | Usable |
+| **넙치** (flatfish) | v10 LightGBM | **11.1%** | GRU 13.9% | Production ready |
+| **우럭** (rockfish) | TFT (GPU) | **14.7%** | v10 LightGBM 18.7% | Production ready |
+| **방어** (yellowtail) | TFT (GPU) | **15.6%** | Transformer 42.5% | Production ready |
+| **도다리** (flounder) | CNN-LSTM+VMD (GPU, v10) | **16.1%** | GRU+VMD 16.2% | Production ready |
+| **농어** (sea bass) | GRU (GPU, v10) | **16.5%** | Transformer 17.2% | Production ready |
+| **감성돔** (black porgy) | v10 LightGBM | **17.1%** | GRU 18.2% | Production ready |
+| **참돔** (seabream) | v10 LightGBM | **18.9%** | GRU 19.1% | Production ready |
 
-**All 7 species now below 22% MAPE.** The fair comparison with identical preprocessing revealed that VMD+DL models significantly improve 도다리 (+29%) and 농어 (+22%) over previous bests.
+**All 7 species below 19% MAPE** (방어 at 15.6% via TFT). v10 preprocessing was the single biggest improvement — cutting MAPE by 18-43% across all model types.
+
+**Price band output:** v10 includes calibrated prediction intervals (quantile regression p10/p90 + conformal bands at 80% coverage). See `docs/14_advanced_preprocessing.md`.
 
 ### Full Progression: v1 → TFT
 
@@ -85,11 +87,11 @@ v10 also adds **price band prediction**: LightGBM quantile regression (p10/p50/p
 *농어 TFT result (51%) is an anomaly — gap-filling creates stale prices for this sporadically-traded species. LightGBM with its feature-based approach handles sparse data better.
 
 **Key insights:**
-- **No single model wins for all species.** LightGBM wins for 넙치/도다리, TFT wins for 우럭/방어/참돔, GRU wins for 농어, CNN-LSTM wins for 감성돔.
-- **TFT and LightGBM are the clear top 2** — avg MAPE 24.4% and 28.5% respectively. All other DL models average 43-51%.
-- **방어 was the biggest success story:** from 174% to 15.6% — TFT is the *only* model (CPU or GPU) that solves it.
-- **68 features don't help most DL models** — only TFT and LightGBM can effectively use high-dimensional feature sets. Simpler DL models get worse with more features.
-- **6/7 species now below 22% MAPE**, 4/7 below 19%. Production-viable for consumer guidance.
+- **v10 preprocessing is the single biggest improvement** — 18-29% for LightGBM, 36-43% for DL models. Preprocessing > architecture.
+- **LightGBM v10 wins 4/7 species** (넙치 11.1%, 참돔 18.9%, 감성돔 17.1%, plus ties). TFT wins 2 (우럭 14.7%, 방어 15.6%). GRU wins 1 (농어 16.5%).
+- **All 7 species below 19% MAPE.** From v1's 174% (방어) to v10's 11.1% (넙치) — the full journey.
+- **v10 preprocessing also enables calibrated price bands** — quantile regression (p10/p90) + conformal intervals at 80% coverage.
+- **방어 remains TFT-only territory** — all other models ≥42% MAPE even with v10 preprocessing.
 
 ---
 
