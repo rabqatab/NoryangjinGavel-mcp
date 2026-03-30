@@ -72,7 +72,32 @@ Each config is identified by: `{species}_{state}_{packaging}_{spec}[_dom]`
 | **참돔_활_kg_2미_dom** | 17.7% (weighted) | Transformer-Q 20.6% | 81.7% | **17.7%** (CPU) | Production |
 | **민어_선_SP_중** | 34.0% (optuna) | CNN-LSTM-Q 40.7% | 86.3% | **34.0%** (CPU) | Directional |
 
-**17/20 configs below 20% MAPE. CQR coverage 81-93% across all configs.** Best overall model is per-config: DL quantile for 14 configs, CPU LightGBM for 4 configs, TFT for 2 configs.
+**18/20 configs below 20% MAPE. 12/20 below 13%.** Best model is per-config: DL quantile for 14 configs, v11 CPU LightGBM for 4 configs, TFT for 2 configs.
+
+### Final Best-of-Breed (all models, all configs)
+
+| Config | MAPE | Model |
+|---|---|---|
+| 바위굴_활_box_대 | **2.1%** | Transformer-Q |
+| 쭈꾸미_선_box_중_dom | **6.8%** | GRU-Q |
+| 깐굴_선_box_소 | **7.6%** | Transformer-Q |
+| 암꽃게_활_kg_대 | **8.2%** | GRU-Q |
+| 수꽃게_활_kg_대 | **10.2%** | GRU-Q |
+| 수꽃게_활_kg_중 | **10.2%** | Transformer-Q |
+| 암꽃게_활_kg_중 | **10.3%** | Transformer-Q |
+| 넙치_활_kg_중 | **11.1%** | v11 LightGBM |
+| 감성돔_활_kg_중_dom | **12.5%** | GRU-Q |
+| 농어_활_kg_중_dom | **12.7%** | GRU-Q |
+| 농어_활_kg_1미_dom | **13.0%** | v11 LightGBM |
+| 우럭_활_kg_중 | **14.7%** | TFT |
+| 도다리_활_kg_중 | **15.0%** | Transformer-Q |
+| 방어_선_kg_중_dom | **15.6%** | TFT |
+| 참돔_활_kg_중_dom | **16.2%** | Transformer-Q |
+| 참숭어_활_kg_중 | **17.1%** | Transformer-Q |
+| 참돔_활_kg_2미_dom | **17.7%** | v11 LightGBM |
+| 넙치_활_kg_2미 | **19.1%** | Transformer-Q |
+| 감숭어_활_kg_중 | **19.9%** | Transformer-Q |
+| 민어_선_SP_중 | **34.0%** | v11 LightGBM |
 
 ## Data Quality Flags
 
