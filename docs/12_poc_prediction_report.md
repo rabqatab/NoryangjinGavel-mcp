@@ -421,12 +421,19 @@ Based on literature review of fish price prediction research:
 - ~~Ocean weather features (Open-Meteo)~~ → v8/v8b: absorbed but don't improve MAPE. Supply proxies already capture the effect.
 - ~~Lag structure analysis~~ → Cumulative supply (5-7d) is 17-49% stronger than single lag-1
 
+### Completed (v8-v10)
+- ~~Ocean weather features (Open-Meteo)~~ → v8/v8b: absorbed but don't improve MAPE
+- ~~Multi-lag supply features~~ → v9: neutral, supply proxies already captured
+- ~~Advanced preprocessing (5 fixes)~~ → v10: **18-29% MAPE reduction** (biggest improvement)
+- ~~Quantile bands (LightGBM)~~ → v10: p10/p50/p90 + conformal 80% coverage
+- ~~Fair DL comparison with v10 preprocessing~~ → All DL models improved 36-43%
+- ~~DL quantile bands~~ → In progress (PinballLoss for GRU/Transformer/CNN-LSTM)
+
 ### Remaining (for production)
-1. **Multi-lag supply features (v9)** — add cum_qty_3d, cum_qty_5d, qty_lag3, qty_lag5, supply_trend_7d. Lag analysis shows 17-49% stronger signal vs current lag-1 only.
-2. **Per-species model routing** — deploy LightGBM for 넙치/감성돔/농어/도다리, TFT for 우럭/방어/참돔.
-3. **Fix 농어 TFT** — investigate gap-filling strategy for sporadic species.
-4. **Prune low-impact features** — advanced calendar (0.3-1.1%) and ocean features (hurt in A/B test) should be removed.
-5. **Import/fuel data** — deferred, low priority given ocean data findings.
+1. **Per-species model routing** — deploy v10 LightGBM for 넙치/참돔/감성돔, TFT for 우럭/방어, GRU for 농어, CNN-LSTM+VMD for 도다리.
+2. **MCP Server** — expose predictions + price data via MCP protocol for Claude queries.
+3. **Daily pipeline** — automate: crawl → preprocess → predict → serve.
+4. **KHOA real station data** — deferred, will improve as daily data accumulates via Open-Meteo.
 
 Sources:
 - [Price Forecasting of Marine Fish — PMC (2024)](https://pmc.ncbi.nlm.nih.gov/articles/PMC11048843/)

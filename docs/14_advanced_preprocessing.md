@@ -100,6 +100,33 @@ All conformal bands achieve exactly **80% actual coverage** — properly calibra
   Budget range: 19,000 ~ 21,800 KRW/kg (p10~p90)
 ```
 
+## Impact on DL Models
+
+The same 5 fixes applied to DL models (GRU, LSTM, Transformer, etc.) gave even larger improvements than LightGBM:
+
+| Model | Before v10 Preproc | After v10 Preproc | Improvement |
+|---|---|---|---|
+| GRU | 47.6% avg | 27.2% avg | **-43%** |
+| Transformer | 44.3% avg | 27.5% avg | **-38%** |
+| CNN-LSTM | 43.8% avg | 28.0% avg | **-36%** |
+| LSTM | 44.1% avg | 28.3% avg | **-36%** |
+
+**Preprocessing quality matters more than model architecture** — the same 5 fixes improved DL models by 36-43%, which is larger than the difference between any two model architectures.
+
+### Updated Best-of-Breed (with v10 preprocessing)
+
+| Species | Best Model | MAPE |
+|---|---|---|
+| 넙치 | v10 LightGBM | **11.1%** |
+| 우럭 | TFT | **14.7%** |
+| 방어 | TFT | **15.6%** |
+| 도다리 | CNN-LSTM+VMD | **16.1%** |
+| 농어 | GRU | **16.5%** |
+| 감성돔 | v10 LightGBM | **17.1%** |
+| 참돔 | v10 LightGBM | **18.9%** |
+
 ## Implementation
 
-All 5 fixes + quantile bands are implemented in `scripts/poc_prediction_v10.py` and will be applied consistently across both CPU (LightGBM) and GPU (DL models) training pipelines.
+All 5 fixes + quantile bands are implemented in:
+- `scripts/poc_prediction_v10.py` — CPU (LightGBM) with quantile + conformal bands
+- `scripts/train_all_dl_models.py` — GPU (all DL models) with v10 preprocessing + quantile bands

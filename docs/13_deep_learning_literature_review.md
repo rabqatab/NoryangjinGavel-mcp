@@ -226,12 +226,15 @@ Findings from our v1–v8b experiments compared to literature predictions:
 
 | Literature Claim | Our Result | Verdict |
 |---|---|---|
-| VMD decomposition improves prediction by 20-80% | VMD improved 2-12% (v5) | **Partially confirmed** — gains smaller than claimed, possibly due to data leakage in papers |
+| VMD decomposition improves prediction by 20-80% | VMD improved 2-12% (v5), +29% with DL (도다리 Transformer+VMD) | **Confirmed** — VMD+DL combination is powerful |
 | Ocean/weather features are critical for fish prices | Ocean features hurt MAPE in fair A/B test (v8b) | **Not confirmed** — supply proxy features already capture the effect |
-| TFT achieves 4-9% MAPE on fish prices | TFT achieved 14.7-20.8% on 3 species | **Partially confirmed** — gap between our data (auction prices, mixed lots) and papers (wholesale avg) |
-| Cumulative supply is better than single lag | cum_qty_7d 17-49% stronger than lag-1 | **Confirmed** — strongest finding from lag analysis |
-| GNN outperforms LSTM for correlated multivariate | Not tested — TFT was sufficient | N/A |
-| ARIMA beats DL for stable linear species | ARIMA best for 우럭 in v1, TFT better in GPU run | **Context-dependent** |
+| TFT achieves 4-9% MAPE on fish prices | TFT achieved 14.7-15.6% on 우럭/방어 | **Partially confirmed** — gap due to auction vs wholesale data |
+| Preprocessing matters more than model architecture | v10 preprocessing improved all models by 18-43% | **Strongly confirmed** — biggest single improvement in the project |
+| Winsorized/robust aggregation improves signal | Winsorized mean: +14% autocorr, -28% noise | **Confirmed** — simple mean is the worst aggregation method |
+| Log-transform fixes price prediction | Box-Cox λ=0.24 (near log), skewness 0.66→0.00 | **Confirmed** — all models benefit from log-space prediction |
+| Cumulative supply is better than single lag | cum_qty_7d 17-49% stronger than lag-1 | **Confirmed** |
+| GRU matches LSTM with fewer parameters | GRU beats LSTM in 5/7 species | **Confirmed** |
+| BiLSTM+Attention improves over vanilla LSTM | BiLSTM+Attn was worst RNN variant | **Not confirmed** — attention adds noise for simple series |
 
 ### VMD/EMD Hybrid Papers
 - [GA-VMD-LSTM Agricultural Prices (2025)](https://www.nature.com/articles/s41598-025-94173-0)
