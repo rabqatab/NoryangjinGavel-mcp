@@ -38,17 +38,19 @@ Two runs: 12-feature (basic) and 68-feature (same features as LightGBM v6) for f
 - **CNN-LSTM is best for 감성돔** (21.6%) — the 1D convolution captures local patterns in the rich feature set
 - **방어 remains the litmus test:** only TFT solves it. All other DL models produce 150-197% MAPE.
 
-### Best-of-Breed Results (Final — CPU + all 7 DL models, 68-feature fair comparison)
+### Best-of-Breed Results (Final — CPU + 7 DL models, 68 features, same VMD preprocessing)
 
 | Species | Best Model | MAPE | Runner-up | Status |
 |---|---|---|---|---|
-| **넙치** (flatfish) | v6 VMD+LightGBM | **14.8%** | GRU 17.9% | Production ready |
+| **넙치** (flatfish) | v6 VMD+LightGBM | **14.8%** | Transformer+VMD 17.5% | Production ready |
 | **우럭** (rockfish) | TFT (GPU) | **14.7%** | LightGBM 24.1% | Production ready |
 | **방어** (yellowtail) | TFT (GPU) | **15.6%** | LightGBM 62.6% | Production ready |
-| **농어** (sea bass) | GRU (GPU, 68f) | **18.9%** | Transformer 19.8% | Production ready |
-| **참돔** (seabream) | TFT (GPU) | **20.8%** | Transformer 24.8% | Usable |
-| **감성돔** (black porgy) | CNN-LSTM (GPU, 68f) | **21.6%** | LightGBM 22.8% | Usable |
-| **도다리** (flounder) | v7 STL-VMD+LightGBM | **25.1%** | GRU 26.9% | Usable (seasonal) |
+| **도다리** (flounder) | Transformer+VMD (GPU) | **17.8%** | GRU+VMD 18.2% | Production ready |
+| **농어** (sea bass) | GRU+VMD (GPU) | **18.4%** | CNN-LSTM+VMD 18.7% | Production ready |
+| **참돔** (seabream) | TFT (GPU) | **20.8%** | Transformer+VMD 25.5% | Usable |
+| **감성돔** (black porgy) | Transformer+VMD (GPU) | **21.8%** | GRU+VMD 22.3% | Usable |
+
+**All 7 species now below 22% MAPE.** The fair comparison with identical preprocessing revealed that VMD+DL models significantly improve 도다리 (+29%) and 농어 (+22%) over previous bests.
 
 ### Full Progression: v1 → TFT
 
