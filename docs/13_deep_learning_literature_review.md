@@ -220,6 +220,19 @@ Key considerations for GB10:
 - [TimesNet (ICLR 2023)](https://arxiv.org/abs/2210.02186)
 - [TFT — Temporal Fusion Transformer (2021)](https://arxiv.org/abs/1912.09363)
 
+### Experimental Validation Notes
+
+Findings from our v1–v8b experiments compared to literature predictions:
+
+| Literature Claim | Our Result | Verdict |
+|---|---|---|
+| VMD decomposition improves prediction by 20-80% | VMD improved 2-12% (v5) | **Partially confirmed** — gains smaller than claimed, possibly due to data leakage in papers |
+| Ocean/weather features are critical for fish prices | Ocean features hurt MAPE in fair A/B test (v8b) | **Not confirmed** — supply proxy features already capture the effect |
+| TFT achieves 4-9% MAPE on fish prices | TFT achieved 14.7-20.8% on 3 species | **Partially confirmed** — gap between our data (auction prices, mixed lots) and papers (wholesale avg) |
+| Cumulative supply is better than single lag | cum_qty_7d 17-49% stronger than lag-1 | **Confirmed** — strongest finding from lag analysis |
+| GNN outperforms LSTM for correlated multivariate | Not tested — TFT was sufficient | N/A |
+| ARIMA beats DL for stable linear species | ARIMA best for 우럭 in v1, TFT better in GPU run | **Context-dependent** |
+
 ### VMD/EMD Hybrid Papers
 - [GA-VMD-LSTM Agricultural Prices (2025)](https://www.nature.com/articles/s41598-025-94173-0)
 - [STL-VMD-PSO-BiLSTM (2025)](https://www.frontiersin.org/journals/sustainable-food-systems/articles/10.3389/fsufs.2025.1568041/full)

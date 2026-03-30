@@ -1,8 +1,9 @@
 # PoC Price Prediction Report
 
-> Results from 8 iterations: v1–v7 (CPU, LightGBM) + TFT (GPU, Temporal Fusion Transformer).
-> CPU scripts: `scripts/poc_prediction.py` (v1) through `poc_prediction_v7.py` (v7)
+> Results from 10 iterations: v1–v8b (CPU, LightGBM) + TFT (GPU, Temporal Fusion Transformer).
+> CPU scripts: `scripts/poc_prediction.py` (v1) through `poc_prediction_v8b.py` (v8b)
 > GPU scripts: `scripts/train_tft.py` (Docker on GB10 Blackwell)
+> Ocean data: `scripts/fetch_ocean_openmeteo.py` (Open-Meteo, 11K rows, 5 stations, 2020–2026)
 
 ## Executive Summary
 
@@ -175,6 +176,33 @@ Each species is queried with specific filters to isolate a clean price signal:
 
 **Lesson:** TFT excels at capturing complex temporal patterns (방어's seasonal demand, 우럭's non-linear dynamics) but struggles with sparse/irregular data. The best strategy is a per-species model selection: TFT for species with good data coverage, LightGBM for sporadic traders.
 
+### v8/v8b: Ocean Weather Features (Open-Meteo)
+
+**Data source:** Open-Meteo API (free, no rate limit). 11,385 rows from 5 coastal stations (제주, 여수, 부산, 인천, 속초), 2020–2026. Features: wave_height, swell_height, wave_direction, wind_speed, wind_gust, temperature, precipitation, pressure, sunshine_hours.
+
+**12 new ocean features (68 → 80):** Each species mapped to its nearest fishing port station. Lag-1 values + 7d rolling averages + storm flag.
+
+**v8 Result (full history, ocean=None for pre-2020):** Flat — ocean features get 5-9% importance but don't improve MAPE. Pre-2020 missing values (70% of data) dilute the signal.
+
+**v8b Result (fair A/B test, 2020+ only):** Ocean features **hurt all 6 species** (-0.1% to -20.7% worse). Two causes:
+1. Dropping None rows shrinks training data ~40%
+2. Open-Meteo reanalysis data is gridded/modeled, not actual station observations — spatial resolution too coarse for local fishing conditions
+
+**Key finding from v8b:** Existing supply proxy features (`lots_drop`, `qty_drop`, `supply_shock`) already capture the downstream effect of bad weather. Adding the *cause* (waves, wind) doesn't help when the *effect* (supply drops) is already measured. This matches the literature: "landing volume was the key feature" (Nizam Zachman 2025).
+
+### Lag Structure Analysis
+
+Cross-correlation analysis of supply quantity at different lags vs price at t+7 revealed:
+
+| Species | qty lag-1 | qty lag-3 | cum_qty 7d | Improvement |
+|---|---|---|---|---|
+| 도다리 | -0.19 | -0.18 | **-0.23** | +21% |
+| 감성돔 | -0.09 | -0.10 | **-0.14** | +49% |
+| 넙치 | -0.12 | -0.13 | **-0.14** | +17% |
+| 참돔 | -0.07 | -0.06 | **-0.09** | +22% |
+
+**Cumulative supply over 5-7 days is consistently stronger than any single lag.** A week of low supply creates accumulated scarcity that drives prices up more than one bad day. Individual price lags (lag-1 through lag-5) carry near-identical information (r=0.63-0.64), but the 30-day price change has unique signal (r=0.19).
+
 ---
 
 ## Feature Importance Analysis
@@ -338,13 +366,15 @@ Based on literature review of fish price prediction research:
 - ~~STL-VMD dual decomposition + Optuna K search~~ → v7, marginal gains for 도다리/우럭
 - ~~TFT (Temporal Fusion Transformer) on GPU~~ → Wins for 우럭 (14.7%), 방어 (15.6%), 참돔 (20.8%)
 - ~~GRU/LSTM evaluation~~ → Not needed; TFT already achieved literature-target MAPE
+- ~~Ocean weather features (Open-Meteo)~~ → v8/v8b: absorbed but don't improve MAPE. Supply proxies already capture the effect.
+- ~~Lag structure analysis~~ → Cumulative supply (5-7d) is 17-49% stronger than single lag-1
 
 ### Remaining (for production)
-1. **Per-species model routing** — deploy LightGBM for 넙치/감성돔/농어/도다리, TFT for 우럭/방어/참돔. This is the immediate next step for the MCP server.
-2. **Integrate KHOA ocean data** (wave height, SST, wind) — deferred, API registration needed. Expected to further improve 방어 and 도다리.
-3. **Fix 농어 TFT** — investigate gap-filling strategy for sporadic species; consider interpolation instead of forward-fill.
-4. **Import/fuel data** for species with foreign supply sensitivity.
-5. **Prune low-impact features** — advanced calendar (0.3-1.1%) adds noise without value.
+1. **Multi-lag supply features (v9)** — add cum_qty_3d, cum_qty_5d, qty_lag3, qty_lag5, supply_trend_7d. Lag analysis shows 17-49% stronger signal vs current lag-1 only.
+2. **Per-species model routing** — deploy LightGBM for 넙치/감성돔/농어/도다리, TFT for 우럭/방어/참돔.
+3. **Fix 농어 TFT** — investigate gap-filling strategy for sporadic species.
+4. **Prune low-impact features** — advanced calendar (0.3-1.1%) and ocean features (hurt in A/B test) should be removed.
+5. **Import/fuel data** — deferred, low priority given ocean data findings.
 
 Sources:
 - [Price Forecasting of Marine Fish — PMC (2024)](https://pmc.ncbi.nlm.nih.gov/articles/PMC11048843/)
