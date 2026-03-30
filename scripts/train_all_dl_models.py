@@ -850,6 +850,97 @@ class PatchTransformer(nn.Module):
         return self.fc(h)
 
 
+# ── Quantile Loss ─────────────────────────────────────────────────
+
+
+class PinballLoss(nn.Module):
+    """Quantile regression loss for simultaneous multi-quantile prediction."""
+
+    def __init__(self, quantiles=[0.1, 0.5, 0.9]):
+        super().__init__()
+        self.quantiles = quantiles
+
+    def forward(self, pred, actual):
+        # pred: (batch, n_quantiles), actual: (batch, 1) or (batch,)
+        actual = actual.unsqueeze(-1) if actual.dim() == 1 else actual
+        losses = []
+        for i, q in enumerate(self.quantiles):
+            diff = actual - pred[:, i:i + 1]
+            loss = torch.where(diff >= 0, q * diff, (q - 1) * diff)
+            losses.append(loss.mean())
+        return sum(losses) / len(losses)
+
+
+# ── Quantile Model Variants ──────────────────────────────────────
+
+
+class GRUQuantile(nn.Module):
+    """GRU with 3-output head for quantile prediction (p10, p50, p90)."""
+
+    def __init__(self, input_size: int, hidden_size: int = HIDDEN_SIZE,
+                 num_layers: int = NUM_LAYERS, n_quantiles: int = 3, dropout: float = 0.1):
+        super().__init__()
+        self.gru = nn.GRU(input_size, hidden_size, num_layers,
+                          batch_first=True, dropout=dropout if num_layers > 1 else 0.0)
+        self.fc = nn.Linear(hidden_size, n_quantiles)
+
+    def forward(self, x):
+        out, _ = self.gru(x)
+        return self.fc(out[:, -1, :])  # (batch, n_quantiles)
+
+
+class TransformerQuantile(nn.Module):
+    """Transformer encoder with 3-output head for quantile prediction."""
+
+    def __init__(self, input_size: int, d_model: int = 64, nhead: int = 4,
+                 num_layers: int = 2, n_quantiles: int = 3, dropout: float = 0.1):
+        super().__init__()
+        self.input_proj = nn.Linear(input_size, d_model)
+        self.pos_enc = PositionalEncoding(d_model)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=d_model * 4,
+            dropout=dropout, batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.fc = nn.Linear(d_model, n_quantiles)
+
+    def forward(self, x):
+        h = self.input_proj(x)
+        h = self.pos_enc(h)
+        h = self.encoder(h)
+        return self.fc(h[:, -1, :])
+
+
+class CNNLSTMQuantile(nn.Module):
+    """CNN-LSTM with 3-output head for quantile prediction."""
+
+    def __init__(self, input_size: int, hidden_size: int = HIDDEN_SIZE,
+                 num_layers: int = NUM_LAYERS, n_quantiles: int = 3,
+                 cnn_filters: int = 32, kernel_size: int = 3, dropout: float = 0.1):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv1d(input_size, cnn_filters, kernel_size, padding=kernel_size // 2),
+            nn.ReLU(),
+            nn.BatchNorm1d(cnn_filters),
+        )
+        self.lstm = nn.LSTM(cnn_filters, hidden_size, num_layers,
+                            batch_first=True, dropout=dropout if num_layers > 1 else 0.0)
+        self.fc = nn.Linear(hidden_size, n_quantiles)
+
+    def forward(self, x):
+        c = self.conv(x.permute(0, 2, 1))
+        c = c.permute(0, 2, 1)
+        out, _ = self.lstm(c)
+        return self.fc(out[:, -1, :])
+
+
+QUANTILE_MODELS = {
+    "GRU": GRUQuantile,
+    "Transformer": TransformerQuantile,
+    "CNN-LSTM": CNNLSTMQuantile,
+}
+
+
 # ── Training Utilities ────────────────────────────────────────────
 
 
@@ -985,6 +1076,201 @@ def run_test(model: nn.Module, test_loader: DataLoader, device: str,
         "rmse": round(rmse, 0),
         "dir_acc": round(dir_acc, 1),
         "n_samples": len(preds),
+    }
+
+
+# ── Quantile Band Evaluation ──────────────────────────────────────
+
+
+def evaluate_bands(pred_q10, pred_q50, pred_q90, actuals):
+    """Evaluate quantile prediction bands on denormalized (raw) prices."""
+    coverage = np.mean((actuals >= pred_q10) & (actuals <= pred_q90)) * 100
+    band_width = np.mean(pred_q90 - pred_q10)
+    band_pct = np.mean(
+        (pred_q90 - pred_q10) / np.where(pred_q50 > 0, pred_q50, 1)
+    ) * 100
+    mape_p50 = np.mean(
+        np.abs(pred_q50 - actuals) / np.where(actuals > 0, actuals, 1)
+    ) * 100
+    return {
+        "mape_p50": round(mape_p50, 1),
+        "coverage": round(coverage, 1),
+        "band_width_avg": round(float(band_width)),
+        "band_pct": round(band_pct, 1),
+    }
+
+
+def compute_conformal_bands(pred_p50_denorm, actuals_denorm, alpha=0.1):
+    """
+    Compute conformal prediction bands from point prediction residuals.
+    Uses the calibration set (all but the last 20% of data) to find the
+    (1-alpha) quantile of absolute residuals, then applies that as a
+    symmetric band around p50 predictions.
+    Returns (conformal_lo, conformal_hi, conformal_coverage, conformal_width).
+    """
+    n = len(pred_p50_denorm)
+    cal_size = int(n * 0.8)
+    if cal_size < 10:
+        # Not enough data for calibration
+        return pred_p50_denorm, pred_p50_denorm, 0.0, 0.0
+
+    cal_residuals = np.abs(pred_p50_denorm[:cal_size] - actuals_denorm[:cal_size])
+    q_hat = np.quantile(cal_residuals, 1 - alpha)
+
+    conformal_lo = pred_p50_denorm - q_hat
+    conformal_hi = pred_p50_denorm + q_hat
+
+    # Evaluate on the remaining 20%
+    test_actuals = actuals_denorm[cal_size:]
+    test_lo = conformal_lo[cal_size:]
+    test_hi = conformal_hi[cal_size:]
+    if len(test_actuals) > 0:
+        coverage = float(np.mean((test_actuals >= test_lo) & (test_actuals <= test_hi))) * 100
+        width = float(np.mean(test_hi - test_lo))
+    else:
+        coverage = 0.0
+        width = 0.0
+
+    return conformal_lo, conformal_hi, coverage, width
+
+
+# ── Quantile Dataset ─────────────────────────────────────────────
+
+
+class QuantileDataset(Dataset):
+    """Sliding window dataset for quantile prediction: (lookback, features) -> single next-day price."""
+
+    def __init__(self, features: np.ndarray, prices: np.ndarray,
+                 lookback: int = LOOKBACK):
+        self.X = []
+        self.y = []
+        for i in range(lookback, len(features)):
+            self.X.append(features[i - lookback:i])
+            self.y.append(prices[i])  # single next-day target
+        self.X = np.array(self.X)
+        self.y = np.array(self.y)
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        return torch.FloatTensor(self.X[idx]), torch.FloatTensor([self.y[idx]])
+
+
+# ── Quantile Training ────────────────────────────────────────────
+
+
+def train_quantile_model(model: nn.Module, train_loader: DataLoader,
+                         val_loader: DataLoader, epochs: int = EPOCHS,
+                         lr: float = LR, device: str = "cuda",
+                         patience: int = PATIENCE) -> dict:
+    """
+    Training loop using PinballLoss for quantile regression.
+    Returns dict with training metadata.
+    """
+    model = model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", patience=5, factor=0.5,
+    )
+    criterion = PinballLoss(quantiles=[0.1, 0.5, 0.9])
+
+    best_val_loss = float("inf")
+    best_state = None
+    epochs_no_improve = 0
+    best_epoch = 0
+
+    for epoch in range(1, epochs + 1):
+        # Train
+        model.train()
+        train_loss = 0.0
+        n_train = 0
+        for x, y in train_loader:
+            x, y = x.to(device), y.to(device)
+            pred = model(x)  # (batch, 3)
+            loss = criterion(pred, y)
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            train_loss += loss.item() * x.size(0)
+            n_train += x.size(0)
+
+        # Validate
+        model.train(False)
+        val_loss = 0.0
+        n_val = 0
+        with torch.no_grad():
+            for x, y in val_loader:
+                x, y = x.to(device), y.to(device)
+                pred = model(x)
+                loss = criterion(pred, y)
+                val_loss += loss.item() * x.size(0)
+                n_val += x.size(0)
+
+        avg_train = train_loss / max(n_train, 1)
+        avg_val = val_loss / max(n_val, 1)
+        scheduler.step(avg_val)
+
+        if avg_val < best_val_loss:
+            best_val_loss = avg_val
+            best_state = deepcopy(model.state_dict())
+            best_epoch = epoch
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+
+        if epochs_no_improve >= patience:
+            break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    return {"best_epoch": best_epoch, "best_val_loss": best_val_loss}
+
+
+def run_quantile_test(model: nn.Module, test_loader: DataLoader, device: str,
+                      price_mean: float, price_std: float) -> dict:
+    """
+    Run quantile model on test set.
+    Returns dict with denormalized q10, q50, q90 arrays and actuals.
+    Denormalization: exp(pred_q * std + mean) (same log-transform reversal as point models).
+    """
+    model.train(False)
+    all_preds = []
+    all_actuals = []
+
+    with torch.no_grad():
+        for x, y in test_loader:
+            x = x.to(device)
+            pred = model(x)  # (batch, 3)
+            all_preds.append(pred.cpu().numpy())
+            all_actuals.append(y.numpy())
+
+    if not all_preds:
+        return {"q10": np.array([]), "q50": np.array([]), "q90": np.array([]),
+                "actuals": np.array([])}
+
+    preds = np.concatenate(all_preds, axis=0)    # (n, 3)
+    actuals = np.concatenate(all_actuals, axis=0)  # (n, 1)
+    actuals = actuals.squeeze(-1)  # (n,)
+
+    # Denormalize: undo z-score then exp
+    q10_log = preds[:, 0] * price_std + price_mean
+    q50_log = preds[:, 1] * price_std + price_mean
+    q90_log = preds[:, 2] * price_std + price_mean
+    actuals_log = actuals * price_std + price_mean
+
+    q10_raw = np.exp(q10_log)
+    q50_raw = np.exp(q50_log)
+    q90_raw = np.exp(q90_log)
+    actuals_raw = np.exp(actuals_log)
+
+    return {
+        "q10": q10_raw,
+        "q50": q50_raw,
+        "q90": q90_raw,
+        "actuals": actuals_raw,
     }
 
 
@@ -1325,6 +1611,9 @@ def main():
     pp_results = defaultdict(dict)
     pp_timing = defaultdict(dict)
 
+    # Cache per-species preprocessed data for quantile training reuse
+    species_cache = {}  # {species: {train_norm, test_norm, train_log_norm, test_log_norm, ...}}
+
     # Load TFT results if available
     print("\n--- Loading TFT results ---")
     tft_results = load_tft_results()
@@ -1425,6 +1714,17 @@ def main():
             raw_results[sp][k] = v
         for k, v in tim.items():
             raw_timing[sp][k] = v
+
+        # Cache preprocessed data for quantile training reuse
+        species_cache[sp] = {
+            "train_norm": train_norm,
+            "test_norm": test_norm,
+            "train_log_norm": train_log_norm,
+            "test_log_norm": test_log_norm,
+            "log_price_mean": log_price_mean,
+            "log_price_std": log_price_std,
+            "n_features": n_features,
+        }
 
         # ────────────────────────────────────────────────────────────
         # TABLE 2: +Preprocessing (smoothed log-target + VMD + regime split)
@@ -1674,6 +1974,185 @@ def main():
             row += f" {t:>7.1f}s"
         print(row)
 
+    # ── Quantile Band Predictions ───────────────────────────────────
+    print("\n" + "=" * 70)
+    print("QUANTILE BAND PREDICTIONS (DL Models)")
+    print("=" * 70)
+    print("Training p10/p50/p90 quantile models for top 3 DL architectures...")
+    print("(GRU, Transformer, CNN-LSTM with PinballLoss)")
+    print()
+
+    quantile_model_names = ["GRU", "Transformer", "CNN-LSTM"]
+    quantile_results = {}  # {species: {model: {mape_p50, coverage, band_width_avg, band_pct, conformal_*}}}
+
+    for cfg in SPECIES_CONFIGS:
+        sp = cfg["species"]
+        if sp not in species_cache:
+            print(f"\n  [{sp}] SKIP: no cached data (species was skipped earlier)")
+            continue
+
+        cache = species_cache[sp]
+        train_norm_q = cache["train_norm"]
+        test_norm_q = cache["test_norm"]
+        train_log_norm_q = cache["train_log_norm"]
+        test_log_norm_q = cache["test_log_norm"]
+        log_price_mean_q = cache["log_price_mean"]
+        log_price_std_q = cache["log_price_std"]
+        n_features_q = cache["n_features"]
+
+        print(f"\n  === {sp} ===")
+
+        # Build quantile datasets (next-day prediction, not horizon=7)
+        train_q_ds = QuantileDataset(train_norm_q, train_log_norm_q, lookback=LOOKBACK)
+        test_q_ds = QuantileDataset(test_norm_q, test_log_norm_q, lookback=LOOKBACK)
+
+        if len(train_q_ds) < 50 or len(test_q_ds) < 10:
+            print(f"    SKIP: insufficient samples (train={len(train_q_ds)}, test={len(test_q_ds)})")
+            continue
+
+        train_q_loader = DataLoader(train_q_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+        test_q_loader = DataLoader(test_q_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+
+        # Validation split
+        val_split_q = int(len(train_q_ds) * 0.9)
+        train_sub_q = torch.utils.data.Subset(train_q_ds, range(val_split_q))
+        val_sub_q = torch.utils.data.Subset(train_q_ds, range(val_split_q, len(train_q_ds)))
+        train_sub_q_loader = DataLoader(train_sub_q, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+        val_sub_q_loader = DataLoader(val_sub_q, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+
+        quantile_results[sp] = {}
+
+        for qm_name in quantile_model_names:
+            print(f"    [{qm_name}]", end=" ", flush=True)
+            t0 = time.time()
+            try:
+                qm_cls = QUANTILE_MODELS[qm_name]
+                qm = qm_cls(n_features_q)
+                n_params = count_parameters(qm)
+                print(f"({n_params:,} params)", end=" ", flush=True)
+
+                train_info = train_quantile_model(
+                    qm, train_sub_q_loader, val_sub_q_loader,
+                    epochs=EPOCHS, lr=LR, device=device, patience=PATIENCE,
+                )
+                print(f"ep={train_info['best_epoch']}", end=" ", flush=True)
+
+                # Get quantile predictions
+                qt_result = run_quantile_test(
+                    qm, test_q_loader, device,
+                    log_price_mean_q, log_price_std_q,
+                )
+
+                q10 = qt_result["q10"]
+                q50 = qt_result["q50"]
+                q90 = qt_result["q90"]
+                actuals_q = qt_result["actuals"]
+
+                if len(q50) > 0:
+                    # Evaluate quantile bands
+                    band_metrics = evaluate_bands(q10, q50, q90, actuals_q)
+
+                    # Compute conformal bands from p50 residuals
+                    _, _, conf_cov, conf_width = compute_conformal_bands(
+                        q50, actuals_q, alpha=0.1,
+                    )
+
+                    band_metrics["conformal_coverage"] = round(conf_cov, 1)
+                    band_metrics["conformal_width"] = round(float(conf_width))
+
+                    # Store example forecast (last test sample)
+                    band_metrics["example_forecast"] = {
+                        "p10": round(float(q10[-1])),
+                        "p50": round(float(q50[-1])),
+                        "p90": round(float(q90[-1])),
+                        "actual": round(float(actuals_q[-1])),
+                    }
+
+                    elapsed = time.time() - t0
+                    quantile_results[sp][qm_name] = band_metrics
+
+                    print(f"p50 MAPE={band_metrics['mape_p50']:.1f}% "
+                          f"Coverage={band_metrics['coverage']:.1f}% "
+                          f"Band={band_metrics['band_pct']:.1f}% "
+                          f"[{elapsed:.1f}s]")
+                else:
+                    elapsed = time.time() - t0
+                    print(f"EMPTY predictions [{elapsed:.1f}s]")
+
+            except Exception as e:
+                elapsed = time.time() - t0
+                print(f"FAILED: {e} [{elapsed:.1f}s]")
+                quantile_results[sp][qm_name] = {
+                    "mape_p50": 999.0, "coverage": 0.0,
+                    "band_width_avg": 0, "band_pct": 0.0,
+                    "error": str(e),
+                }
+
+            if device == "cuda":
+                torch.cuda.empty_cache()
+
+    # Print quantile band results table
+    print("\n")
+    print("=" * 90)
+    print("  QUANTILE BAND RESULTS")
+    print("=" * 90)
+    print(f"  {'Model':<20} {'Species':<10} {'p50 MAPE':>10} {'Coverage':>10} {'Band Width':>15}")
+    print("  " + "-" * 65)
+    for sp in species_list:
+        if sp not in quantile_results:
+            continue
+        for qm_name in quantile_model_names:
+            if qm_name not in quantile_results[sp]:
+                continue
+            qr = quantile_results[sp][qm_name]
+            mape_str = f"{qr['mape_p50']:.1f}%"
+            cov_str = f"{qr['coverage']:.1f}%"
+            bw = qr.get("band_width_avg", 0)
+            bp = qr.get("band_pct", 0)
+            bw_str = f"{bw:,} ({bp:.0f}%)"
+            print(f"  {qm_name:<20} {sp:<10} {mape_str:>10} {cov_str:>10} {bw_str:>15}")
+
+    # Print conformal band comparison
+    print("\n")
+    print("=" * 90)
+    print("  CONFORMAL BAND COMPARISON (90% target coverage)")
+    print("=" * 90)
+    print(f"  {'Model':<20} {'Species':<10} {'Quantile Cov':>14} {'Conformal Cov':>15} {'Conf Width':>12}")
+    print("  " + "-" * 71)
+    for sp in species_list:
+        if sp not in quantile_results:
+            continue
+        for qm_name in quantile_model_names:
+            if qm_name not in quantile_results[sp]:
+                continue
+            qr = quantile_results[sp][qm_name]
+            q_cov = f"{qr['coverage']:.1f}%"
+            c_cov = f"{qr.get('conformal_coverage', 0):.1f}%"
+            c_width = f"{qr.get('conformal_width', 0):,}"
+            print(f"  {qm_name:<20} {sp:<10} {q_cov:>14} {c_cov:>15} {c_width:>12}")
+
+    # Print consumer-friendly example forecasts
+    print("\n")
+    print("=" * 70)
+    print("  EXAMPLE FORECASTS (last test sample per species)")
+    print("=" * 70)
+    for sp in species_list:
+        if sp not in quantile_results:
+            continue
+        # Use best quantile model (lowest p50 MAPE)
+        sp_qr = quantile_results[sp]
+        valid_qms = {m: r for m, r in sp_qr.items() if "example_forecast" in r}
+        if not valid_qms:
+            continue
+        best_qm = min(valid_qms, key=lambda m: valid_qms[m].get("mape_p50", 999))
+        qr = valid_qms[best_qm]
+        ex = qr["example_forecast"]
+        print(f"\n  {sp} next-day forecast ({best_qm} quantile):")
+        print(f"    Low estimate (p10):  {ex['p10']:>10,} KRW/kg")
+        print(f"    Expected (p50):      {ex['p50']:>10,} KRW/kg")
+        print(f"    High estimate (p90): {ex['p90']:>10,} KRW/kg")
+        print(f"    Confidence: {qr['coverage']:.0f}% of actual prices fall within this range")
+
     # Save results
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output = {
@@ -1724,6 +2203,13 @@ def main():
             for i, (name, avg) in enumerate(ranked_pp)
             if avg < 900
         ],
+        "quantile_results": {
+            sp: {
+                model: qr_data
+                for model, qr_data in sp_qr_data.items()
+            }
+            for sp, sp_qr_data in quantile_results.items()
+        },
     }
     out_path = OUTPUT_DIR / "dl_comparison_results.json"
     with open(out_path, "w", encoding="utf-8") as f:
