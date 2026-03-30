@@ -1,8 +1,9 @@
 # PoC Price Prediction Report
 
-> Results from 12 iterations: v1–v10 (CPU, LightGBM) + 7 DL models (GPU) + quantile bands.
-> CPU scripts: `scripts/poc_prediction.py` (v1) through `poc_prediction_v10.py` (v10)
+> Results from 13 iterations: v1–v11 (CPU) + 7 DL models (GPU) + quantile bands + CQR.
+> CPU scripts: `scripts/poc_prediction.py` (v1) through `poc_prediction_v11.py` (v11)
 > GPU scripts: `scripts/train_tft.py`, `scripts/train_all_dl_models.py` (Docker on GB10 Blackwell)
+> 20 prediction configs across 15 species. Registry: `docs/15_prediction_config_registry.md`
 > Additional species: `scripts/poc_test_mullet.py` (20 configs across 15 species)
 > Ocean data: `scripts/fetch_ocean_openmeteo.py` (Open-Meteo, 11K rows, 5 stations, 2020–2026)
 > Config registry: `docs/15_prediction_config_registry.md` (living document)
