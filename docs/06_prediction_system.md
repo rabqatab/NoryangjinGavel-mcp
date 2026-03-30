@@ -2,13 +2,17 @@
 
 ## Overview
 
-| Attribute | Value |
-|-----------|-------|
-| **Purpose** | Statistical/ML-based price predictions |
-| **Models** | Exponential Smoothing, ARIMA, Prophet, Isolation Forest |
-| **Libraries** | statsmodels, prophet, sklearn, scipy |
-| **Execution** | Pre-computed daily (after crawl) |
-| **Target** | Top 30 most-traded species |
+> **Note:** This document was the original design. The actual implementation evolved significantly through 12 iterations. See `docs/12_poc_prediction_report.md` for the final results and `docs/15_prediction_config_registry.md` for the production config list.
+
+| Attribute | Original Design | Actual Implementation |
+|-----------|----------------|----------------------|
+| **Models** | Exp. Smoothing, ARIMA, Prophet | LightGBM (v10), TFT, GRU, Transformer, CNN-LSTM |
+| **Libraries** | statsmodels, prophet, sklearn | lightgbm, pytorch, pytorch-forecasting, vmdpy |
+| **Features** | Price history only | 68 features (calendar, supply, technical, Fourier, distribution) |
+| **Preprocessing** | None planned | 5 fixes: winsorized mean, log-target, outlier removal, origin-weight, adaptive VMD |
+| **Target** | Top 30 species | 20 configs across 15 species (with spec/state/origin filtering) |
+| **Output** | Point predictions | Point + quantile bands (p10/p50/p90) + conformal intervals |
+| **Best MAPE** | Expected 3-15% | Achieved 10.2-16.3% (sashimi), 13.8-36.2% (other) |
 
 ---
 

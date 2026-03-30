@@ -1,10 +1,11 @@
 # Prediction Candidate Shortlist
 
 > Generated from `scripts/eda_prediction_candidates.py` on 2026-03-26.
+> **Update (2026-03-30):** 20 configs across 15 species are now in production. See `docs/15_prediction_config_registry.md` for the current list.
 
 ## Summary
 
-Out of 504 species, **74 survive** a 4-gate filter. **15 Tier A** and **15 Tier B** candidates are recommended for the prediction pipeline.
+Out of 504 species, **74 survive** a 4-gate filter. From these, **20 prediction configs** across 15 species were selected and tested with models ranging from Naive to TFT (Temporal Fusion Transformer). Best results: 10.2-16.3% MAPE for sashimi species.
 
 ![Candidate Funnel](images/eda/candidate_funnel.png)
 

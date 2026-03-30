@@ -19,50 +19,43 @@
 │                     IMPLEMENTATION TIMELINE                          │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
-│  PHASE 1: Project Setup                                             │
+│  PHASE 1: Project Setup ✅ DONE                                     │
 │  ══════════════════════                                             │
-│  □ Project structure                                                │
-│  □ Dependencies                                                     │
-│  □ Database schema                                                  │
+│  ✅ Project structure, dependencies, database schema                │
 │                                                                      │
-│  PHASE 2: Crawler Development                                       │
+│  PHASE 2: Crawler Development ✅ DONE                               │
 │  ════════════════════════════                                       │
-│  □ HTTP client                                                      │
-│  □ HTML parser                                                      │
-│  □ Data normalizer                                                  │
-│  □ Checkpoint system                                                │
+│  ✅ HTTP client, HTML parser, data normalizer, checkpoint system    │
+│  ✅ Species inventory, preprocessing pipeline (5 fixes)             │
 │                                                                      │
-│  PHASE 3: Historical Data Collection                                │
+│  PHASE 3: Historical Data Collection ✅ DONE                        │
 │  ════════════════════════════════════                               │
-│  □ Run initial crawl                                                │
-│  □ Data validation                                                  │
-│  □ Generate summaries                                               │
+│  ✅ 2.59M rows, 504 species, 2004–2026                             │
+│  ✅ Data validation, EDA, aggregation analysis                      │
 │                                                                      │
-│  PHASE 4: MCP Server                                                │
+│  PHASE 4: Prediction System ✅ DONE                                 │
+│  ═══════════════════════════                                        │
+│  ✅ 12 CPU iterations (v1–v10), 7 DL models (GPU)                  │
+│  ✅ 20 prediction configs across 15 species                         │
+│  ✅ All 7 sashimi species below 17% MAPE                           │
+│  ✅ Quantile bands (p10/p50/p90) + conformal intervals             │
+│  ✅ v10 preprocessing (18-29% MAPE reduction)                       │
+│  ✅ Config registry: docs/15_prediction_config_registry.md          │
+│                                                                      │
+│  PHASE 5: MCP Server ⬜ NOT STARTED                                 │
 │  ════════════════════                                               │
 │  □ Server skeleton                                                  │
-│  □ Tool implementations (basic)                                     │
+│  □ Tool implementations (price query + prediction)                  │
 │  □ Testing                                                          │
 │                                                                      │
-│  PHASE 5: Prediction System                                         │
-│  ═══════════════════════════                                        │
-│  □ Statistical models (statsmodels)                                 │
-│  □ ML models (sklearn, prophet)                                     │
-│  □ Prediction pipeline                                              │
-│  □ Prediction MCP tools                                             │
-│                                                                      │
-│  PHASE 6: Security (Anti-Scraping)                                  │
+│  PHASE 6: Security (Anti-Scraping) ⬜ NOT STARTED                   │
 │  ═════════════════════════════════                                  │
-│  □ Result limits (max 100 records, 90-day range)                    │
-│  □ Rate limiting (30/min, 300/hr, 1000/day)                         │
-│  □ Audit logging                                                    │
-│  □ Optional: API key authentication                                 │
+│  □ Rate limiting, audit logging, API key auth                       │
 │                                                                      │
-│  PHASE 7: Deployment                                                │
+│  PHASE 7: Deployment ⬜ NOT STARTED                                 │
 │  ════════════════════                                               │
-│  □ AWS setup                                                        │
-│  □ Automation                                                       │
-│  □ Monitoring                                                       │
+│  □ Daily pipeline (crawl → preprocess → predict → serve)            │
+│  □ Docker deployment, monitoring                                    │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
 ```

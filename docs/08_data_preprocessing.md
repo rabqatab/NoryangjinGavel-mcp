@@ -155,28 +155,25 @@ uv run marimo run notebooks/eda_aggregation.py
 
 See `docs/09_aggregation_eda_report.md` for the full EDA report. Key conclusions:
 
-- **No universal blended aggregation works** — each species needs per-species GROUP BY configuration
-- **Spec-class is the most impactful dimension** (segments price 1.5-6x for 7/10 top species)
-- **Use unweighted mean** — quantity units are incomparable across packaging types
-- **5/10 top species need state partitioning** (아귀, 낙지, 오징어, 넙치, 고등어)
-- **9/10 top species need dominant-packaging filtering** (all except 전복)
+- **No universal blended aggregation works** — each config needs its own filter tuple (species, state, packaging, spec, origin_class)
+- **Use winsorized mean** (v10 Fix 1) — clip extreme lots to p10/p90 of rolling 30-day window before averaging
+- **Log-transform target** (v10 Fix 2) — predict in log-space, exp() back
+- **Remove outlier days** (v10 Fix 3) — flag days with |price - rolling_mean| > 3σ
+- **Origin-weighted aggregation** (v10 Fix 4) — weight lots by origin trading frequency
 
-### DuckDB View
+See `docs/14_advanced_preprocessing.md` for the 5 v10 preprocessing fixes that gave 18-29% MAPE reduction.
 
-Dominant GROUP BY pattern (4/10 top species):
+### Per-Config Query Pattern
+
+Each prediction config queries with its full filter tuple:
 
 ```sql
-CREATE OR REPLACE VIEW v_daily_prices AS
-SELECT trade_date, species, packaging, spec_class,
-       SUM(quantity) AS total_quantity,
-       MAX(price_high) AS price_high,
-       MIN(price_low) AS price_low,
-       CAST(AVG(price_avg) AS INTEGER) AS price_avg,
-       COUNT(*) AS n_lots
+-- Example: 넙치_활_kg_중
+SELECT trade_date, AVG(price_avg) AS price_avg
 FROM read_parquet('data/parquet/prices/**/*.parquet', hive_partitioning=true)
-WHERE state IS NOT NULL AND packaging IS NOT NULL
-GROUP BY trade_date, species, packaging, spec_class
-ORDER BY trade_date, species, packaging, spec_class;
+WHERE species = '넙치' AND state = '활' AND packaging = 'kg' AND spec = '중'
+GROUP BY trade_date
+ORDER BY trade_date
 ```
 
-Note: Multi-state species need additional state filtering. See the per-species decision table in the full report.
+See `docs/15_prediction_config_registry.md` for the full list of 20 configs with data health stats.
