@@ -464,21 +464,26 @@ def build_features_v11(records, ctx, target_sp, offset=7, use_smoothed=False,
         s30 = np.std(prices[max(0,i-30):i])
         r7 = float(max(prices[max(0,i-7):i]) - min(prices[max(0,i-7):i]))
 
-        # Supply
-        oq7 = ctx["sp_qty_7d"][target_sp][di]
-        ol7 = ctx["sp_lots_7d"][target_sp][di]
-        oq30 = np.mean(ctx["sp_qty"][target_sp][max(0,di-30):di]) if di >= 1 else oq7
+        # Supply (safe lookup: non-sashimi species return zeros)
+        nd_ctx = len(ctx["dates"])
+        _zeros = np.zeros(nd_ctx)
+        sp_qty_7d = ctx["sp_qty_7d"].get(target_sp, _zeros)
+        sp_lots_7d = ctx["sp_lots_7d"].get(target_sp, _zeros)
+        sp_qty = ctx["sp_qty"].get(target_sp, _zeros)
+        oq7 = sp_qty_7d[di]
+        ol7 = sp_lots_7d[di]
+        oq30 = np.mean(sp_qty[max(0,di-30):di]) if di >= 1 else oq7
         oqr = oq7 / oq30 if oq30 > 0 else 1
-        oqc = (ctx["sp_qty_7d"][target_sp][di] - ctx["sp_qty_7d"][target_sp][max(0,di-7)]) / max(ctx["sp_qty_7d"][target_sp][max(0,di-7)], 1)
-        olc = (ctx["sp_lots_7d"][target_sp][di] - ctx["sp_lots_7d"][target_sp][max(0,di-7)]) / max(ctx["sp_lots_7d"][target_sp][max(0,di-7)], 1)
-        otq = ctx["total_sashimi_7d"][di] - ctx["sp_qty_7d"][target_sp][di]
+        oqc = (sp_qty_7d[di] - sp_qty_7d[max(0,di-7)]) / max(sp_qty_7d[max(0,di-7)], 1)
+        olc = (sp_lots_7d[di] - sp_lots_7d[max(0,di-7)]) / max(sp_lots_7d[max(0,di-7)], 1)
+        otq = ctx["total_sashimi_7d"][di] - sp_qty_7d[di]
         ml7 = ctx["market_lots_7d"][di]
-        con = ctx["sp_qty"][target_sp][di] / ctx["total_sashimi"][di] if ctx["total_sashimi"][di] > 0 else 0
+        con = sp_qty[di] / ctx["total_sashimi"][di] if ctx["total_sashimi"][di] > 0 else 0
         tsc = (ctx["total_sashimi_7d"][di] - ctx["total_sashimi_7d"][max(0,di-7)]) / max(ctx["total_sashimi_7d"][max(0,di-7)], 1)
         mc = (ctx["market_lots_7d"][di] - ctx["market_lots_7d"][max(0,di-7)]) / max(ctx["market_lots_7d"][max(0,di-7)], 1)
         pvm = p / monthly_avg.get(dt.month, p) if monthly_avg.get(dt.month, p) > 0 else 1
         gap_d = (dt - dt_prev).days
-        ld = int(ol7 < ctx["sp_lots_7d"][target_sp][max(0,di-14)] * 0.5) if di >= 14 else 0
+        ld = int(ol7 < sp_lots_7d[max(0,di-14)] * 0.5) if di >= 14 else 0
         qd = int(oq7 < oq30 * 0.5) if oq30 > 0 else 0
 
         # Technical Indicators
@@ -683,11 +688,15 @@ def make_recent_weights(n_train, decay=2.0):
 def arima_forecast(log_raw, t, horizon):
     """ARIMA(2,1,2) point forecast at time t, horizon steps ahead."""
     from statsmodels.tsa.arima.model import ARIMA
+    fallback = log_raw[t-1] if t > 0 else log_raw[0]
     try:
         m = ARIMA(log_raw[max(0, t-365):t], order=(2, 1, 2)).fit()
-        return m.forecast(steps=horizon)[-1]
+        val = m.forecast(steps=horizon)[-1]
+        if not np.isfinite(val):
+            return fallback
+        return val
     except Exception:
-        return log_raw[t-1] if t > 0 else log_raw[0]
+        return fallback
 
 
 # ── Full v11 Backtest ────────────────────────────────────────────────
@@ -852,6 +861,8 @@ def backtest_v11(X, y, fnames, prices_raw, species, horizon, method="vmd",
 
     def mape_of(preds_log):
         P = np.exp(np.array(preds_log))
+        # Clip extreme predictions before MAPE (guard against inf/nan from ARIMA)
+        P = np.where(np.isfinite(P), P, A)
         return float(np.mean(np.abs(P - A) / np.where(A > 0, A, 1))) * 100
 
     mape_v10 = mape_of(all_preds_v10_log)
