@@ -153,8 +153,30 @@ uv run marimo run notebooks/eda_aggregation.py
 
 ### Aggregation Rules
 
-*To be filled after EDA execution — see the Decision Summary cell in the notebook.*
+See `docs/09_aggregation_eda_report.md` for the full EDA report. Key conclusions:
+
+- **No universal blended aggregation works** — each species needs per-species GROUP BY configuration
+- **Spec-class is the most impactful dimension** (segments price 1.5-6x for 7/10 top species)
+- **Use unweighted mean** — quantity units are incomparable across packaging types
+- **5/10 top species need state partitioning** (아귀, 낙지, 오징어, 넙치, 고등어)
+- **9/10 top species need dominant-packaging filtering** (all except 전복)
 
 ### DuckDB View
 
-*To be filled after EDA execution — the validated GROUP BY query for the prediction pipeline.*
+Dominant GROUP BY pattern (4/10 top species):
+
+```sql
+CREATE OR REPLACE VIEW v_daily_prices AS
+SELECT trade_date, species, packaging, spec_class,
+       SUM(quantity) AS total_quantity,
+       MAX(price_high) AS price_high,
+       MIN(price_low) AS price_low,
+       CAST(AVG(price_avg) AS INTEGER) AS price_avg,
+       COUNT(*) AS n_lots
+FROM read_parquet('data/parquet/prices/**/*.parquet', hive_partitioning=true)
+WHERE state IS NOT NULL AND packaging IS NOT NULL
+GROUP BY trade_date, species, packaging, spec_class
+ORDER BY trade_date, species, packaging, spec_class;
+```
+
+Note: Multi-state species need additional state filtering. See the per-species decision table in the full report.
