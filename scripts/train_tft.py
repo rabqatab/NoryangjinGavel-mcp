@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import pytorch_lightning as pl
+import lightning as pl
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 from pytorch_forecasting.data import GroupNormalizer
 from pytorch_forecasting.metrics import QuantileLoss, MAPE
@@ -339,15 +339,18 @@ def train_and_evaluate():
         print(f"  {sp}: MAPE = {mape:.1f}%")
 
     # Feature importance via attention weights
-    interpretation = tft.interpret_output(predictions.output, reduction="sum")
-    print("\n=== Variable Importance (from attention) ===")
-    for key in ["encoder_variables", "decoder_variables", "static_variables"]:
-        if key in interpretation:
-            print(f"\n  {key}:")
-            imp = interpretation[key]
-            if hasattr(imp, "items"):
-                for name, val in sorted(imp.items(), key=lambda x: -x[1]):
-                    print(f"    {name}: {val:.3f}")
+    try:
+        interpretation = tft.interpret_output(predictions.output, reduction="sum")
+        print("\n=== Variable Importance (from attention) ===")
+        for key in ["encoder_variables", "decoder_variables", "static_variables"]:
+            if key in interpretation:
+                print(f"\n  {key}:")
+                imp = interpretation[key]
+                if hasattr(imp, "items"):
+                    for name, val in sorted(imp.items(), key=lambda x: -x[1]):
+                        print(f"    {name}: {val:.3f}")
+    except Exception as e:
+        print(f"\n  (Interpretation skipped: {e})")
 
     # Save results
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -375,7 +378,7 @@ if __name__ == "__main__":
     print(f"CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
-        print(f"Memory: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+        print(f"Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     print()
 
     results = train_and_evaluate()

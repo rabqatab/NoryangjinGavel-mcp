@@ -4,8 +4,8 @@ WORKDIR /workspace
 
 # Install Python dependencies
 RUN pip install --no-cache-dir \
-    pytorch-forecasting==1.1.1 \
-    pytorch-lightning==2.4.0 \
+    "pytorch-forecasting>=1.0.0,<1.2" \
+    "lightning>=2.0,<2.5" \
     optuna==4.1.0 \
     lightgbm==4.5.0 \
     pyarrow==18.1.0 \
