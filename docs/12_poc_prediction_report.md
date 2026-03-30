@@ -1,37 +1,41 @@
 # PoC Price Prediction Report
 
-> Results from 5 iterations (v1–v5) of price prediction models for 7 sashimi species.
-> Scripts: `scripts/poc_prediction.py` (v1), `poc_prediction_v2.py` (v2), `poc_prediction_v3.py` (v3), `poc_prediction_v4.py` (v4), `poc_prediction_v5.py` (v5)
+> Results from 6 iterations (v1–v6) of price prediction models for 7 sashimi species.
+> Scripts: `scripts/poc_prediction.py` (v1) through `poc_prediction_v6.py` (v6)
 
 ## Executive Summary
 
-Over 5 iterations, MAPE improved significantly for all species. The combination of feature engineering (v2-v4), VMD signal decomposition (v5), and ARIMA ensemble (v5) delivered the best results.
+Over 6 iterations, MAPE improved significantly for all species. The combination of feature engineering (v2-v4), VMD signal decomposition (v5), and 68-feature expansion with technical indicators (v6) delivered the best results.
 
-### Full Progression: v1 → v5
+### Full Progression: v1 → v6
 
-| Species | v1 AR | v2 | v3 | v4 | **v5** | Total Improvement | Dir% |
-|---|---|---|---|---|---|---|---|
-| **넙치** | 16.2% | 15.6% | 15.7% | 15.4% | **15.1%** | +7% | 70.9% |
-| **감성돔** | 26.7% | 25.2% | 24.0% | 23.8% | **22.8%** | +15% | 71.1% |
-| **우럭** | 20.0% | 24.9% | 24.6% | 24.6% | **23.8%** | -19% | 70.2% |
-| **농어** | 27.7% | 25.6% | 26.0% | 26.0% | **23.9%** | **+14%** | 70.2% |
-| **참돔** | 27.7% | 27.1% | 27.1% | 28.5% | **26.8%** | +3% | 72.1% |
-| **도다리** | 44.1% | 47.4% | 28.2% | 26.1% | **26.1%** | **+41%** | 77.8% |
-| **방어** (winter) | 174.4% | 346.2% | 122.0% | 85.5% | **75.5%** | **+57%** | **81.2%** |
+| Species | v1 AR | v2 | v3 | v4 | v5 | **v6** | Total Improvement | Dir% |
+|---|---|---|---|---|---|---|---|---|
+| **넙치** | 16.2% | 15.6% | 15.7% | 15.4% | 15.1% | **14.8%** | **+9%** | 71.6% |
+| **감성돔** | 26.7% | 25.2% | 24.0% | 23.8% | 22.8% | **22.8%** | **+15%** | 71.4% |
+| **우럭** | 20.0% | 24.9% | 24.6% | 24.6% | 23.8% | **24.1%** | -21% | 70.3% |
+| **농어** | 27.7% | 25.6% | 26.0% | 26.0% | 23.9% | **23.6%** | **+15%** | 71.0% |
+| **참돔** | 27.7% | 27.1% | 27.1% | 28.5% | 26.8% | **26.5%** | **+4%** | 73.0% |
+| **도다리** | 44.1% | 47.4% | 28.2% | 26.1% | 26.1% | **26.0%** | **+41%** | 78.6% |
+| **방어** (winter) | 174.4% | 346.2% | 122.0% | 85.5% | 75.5% | **62.6%** | **+64%** | 79.4% |
 
-### Best-of-Breed Summary
+### Best-of-Breed Summary (v6)
 
 | Species | Best Model | MAPE | Direction | Status |
 |---|---|---|---|---|
-| **넙치** | VMD+LightGBM | **15.1%** | 70.9% | Production ready |
-| **감성돔** | VMD+LightGBM | **22.8%** | 71.1% | Production ready |
-| **우럭** | ARIMA+LightGBM ensemble | **23.8%** | 70.2% | Usable |
-| **농어** | VMD+LightGBM | **23.9%** | 70.2% | Usable |
-| **도다리** | VMD+LightGBM | **26.1%** | 77.8% | Usable (seasonal) |
-| **참돔** | VMD+LightGBM | **26.8%** | 72.1% | Usable |
-| **방어** (winter) | VMD+LightGBM | **75.5%** | 81.2% | Directional only |
+| **넙치** | VMD+LightGBM (68 feat) | **14.8%** | 71.6% | Production ready |
+| **감성돔** | VMD+LightGBM (68 feat) | **22.8%** | 71.4% | Production ready |
+| **농어** | VMD+LightGBM (68 feat) | **23.6%** | 71.0% | Usable |
+| **우럭** | ARIMA+LightGBM ensemble | **24.1%** | 70.3% | Usable |
+| **도다리** | VMD+LightGBM (68 feat) | **26.0%** | 78.6% | Usable (seasonal) |
+| **참돔** | VMD+LightGBM (68 feat) | **26.5%** | 73.0% | Usable |
+| **방어** (winter) | VMD+LightGBM (68 feat) | **62.6%** | 79.4% | Directional only |
 
-**Key insight:** Direction accuracy is consistently 70-81% across all species. VMD decomposition helped most species by 2-12% MAPE, and the ARIMA ensemble recovered 우럭's regression from v2-v4.
+**Key insights:**
+- Direction accuracy is consistently 70-81% across all species
+- VMD decomposition + technical indicators deliver the best point predictions
+- The 27 new features in v6 account for **31-47% of total feature importance**
+- 방어 improved from 174% to 63% MAPE across 6 iterations (+64%)
 
 ---
 
@@ -103,6 +107,33 @@ Each species is queried with specific filters to isolate a clean price signal:
 - 우럭: 24.6% → **23.8%** (+3%) — ARIMA ensemble recovered from v2-v4 regression
 
 **Lesson:** Signal decomposition is highly effective for fish prices. Price = trend + seasonal + noise, and predicting each component separately then recombining beats predicting the raw signal. The PMC11048843 paper's finding (0.08% MAPE with VMD+LSTM) is directionally confirmed.
+
+### v6: 68 Features — Technical Indicators + Fourier + Distribution + Advanced Supply
+
+**27 new features added (41 → 68):**
+- Technical Indicators (8): EMA_7, EMA_30, MACD, MACD_signal, MACD_hist, Bollinger_pct, RSI_14, momentum_14d
+- Fourier/Cyclical (6): sin/cos at 365-day, 182-day, and 7-day periods
+- Advanced Calendar (5): is_friday, is_pre_holiday, consecutive_gap, week_position, days_left_in_week
+- Price Distribution (4): skewness_30d, kurtosis_30d, percentile_90d, zscore_30d
+- Advanced Supply (4): own_qty_yoy_ratio, origin_diversity_7d, avg_lot_size_7d, high_low_spread_7d
+
+**Result:** Improvements across most species, with 방어 seeing the biggest gain:
+- 방어 winter: 75.5% → **62.6%** (+17%) — distribution features (skewness, kurtosis) captured regime-switching
+- 넙치: 15.1% → **14.8%** (+2%) — technical indicators refined the already-good model
+- 참돔: 26.8% → **26.5%** (+1%) — broke through the v1-v5 plateau via momentum_14d
+- 농어: 23.9% → **23.6%** (+2%) — Fourier + MACD helped seasonal patterns
+
+**New Feature Category Impact (% of total feature importance):**
+
+| Category | Avg Across Species | Most Important For |
+|---|---|---|
+| Technical Indicators | 15-30% | 우럭 (EMA_30 = 18.1%), all species (momentum_14d) |
+| Fourier | 6-9% | 도다리 (8.6%), 농어 (8.2%) |
+| Distribution | 4-15% | 방어 off-season (15.0% — skewness + kurtosis) |
+| Advanced Supply | 5-8% | 감성돔 (avg_lot_size 3.3%, hl_spread 3.3%) |
+| Advanced Calendar | 0.3-1.1% | Minimal impact — not worth the complexity |
+
+**Lesson:** Technical indicators (especially EMA and momentum) are the most universally impactful new feature category. Distribution features are situation-specific but critical for volatile species. Advanced calendar features were a miss — fish markets don't have strong day-of-week effects at the weekly prediction horizon.
 
 ---
 
@@ -258,11 +289,19 @@ Based on literature review of fish price prediction research:
 
 ## Recommended Next Steps
 
-1. **Integrate KHOA ocean data** (wave height, SST, wind) — expected to improve 방어 and 도다리 significantly
-2. **Signal decomposition** (VMD/EMD) before prediction for volatile species
-3. **Ensemble approach** for 우럭: combine ARIMA (good point prediction) with LightGBM (good features)
-4. **Import/fuel data** for species with foreign supply sensitivity (방어, 낙지)
-5. **Weekly aggregation models** as an alternative to daily smoothed target
+### Completed (v5-v6)
+- ~~Signal decomposition (VMD) before prediction~~ → Done in v5, +2-12% improvement
+- ~~Ensemble approach for 우럭~~ → Done in v5, recovered from v2-v4 regression
+- ~~Technical indicators (EMA, MACD, RSI, Bollinger)~~ → Done in v6, 15-30% of importance
+- ~~Fourier seasonal encoding~~ → Done in v6, 6-9% of importance
+- ~~Price distribution features~~ → Done in v6, critical for 방어 (15%)
+
+### Remaining (by expected impact)
+1. **LSTM/GRU deep learning models** (requires Docker for Blackwell GPU) — can learn temporal patterns VMD+LightGBM misses. GRU achieved 10.6% MAPE for tomato price prediction in the Nature 2025 paper.
+2. **Integrate KHOA ocean data** (wave height, SST, wind) — deferred to future, API registration needed. Expected to improve 방어 and 도다리 where supply disruption is the main driver.
+3. **Import/fuel data** for species with foreign supply sensitivity
+4. **Hyperparameter optimization** (Optuna) — systematic search may squeeze 1-3% more from LightGBM
+5. **Remove low-impact features** — advanced calendar features (0.3-1.1%) add noise, consider pruning
 
 Sources:
 - [Price Forecasting of Marine Fish — PMC (2024)](https://pmc.ncbi.nlm.nih.gov/articles/PMC11048843/)
