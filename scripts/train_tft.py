@@ -309,55 +309,47 @@ def train_and_evaluate():
 
     trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
-    # Evaluate per species using raw predictions
+    # Evaluate using dataloader-level predict
     print("\n=== Evaluation ===")
-    raw_preds = tft.predict(val_dataloader, mode="raw", return_x=True)
-
-    # Collect predictions and actuals per batch
-    all_preds = []
-    all_actuals = []
-    all_groups = []
-
+    predictions = tft.predict(val_dataloader, mode="prediction", return_x=True)
+    pred_arr = predictions.output.cpu().numpy()
+    # Get actuals from the validation dataloader
+    actuals_list = []
+    groups_list = []
     for x, y in val_dataloader:
-        batch_preds = tft.predict(x, mode="prediction")
-        # batch_preds shape: (batch, horizon) — point predictions (median)
-        all_preds.append(batch_preds.cpu().numpy())
-        all_actuals.append(y[0].cpu().numpy())
-        # Get group ids from decoder input
-        all_groups.extend(x["groups"].cpu().numpy().flatten().tolist())
+        actuals_list.append(y[0].cpu().numpy())
+        groups_list.append(x["groups"].cpu().numpy())
 
-    pred_arr = np.concatenate(all_preds, axis=0)
-    actual_arr = np.concatenate(all_actuals, axis=0)
+    actual_arr = np.concatenate(actuals_list, axis=0)
+    groups_arr = np.concatenate(groups_list, axis=0).flatten()
 
-    # Map group indices back to species names
-    group_names = training.decoded_index["group_id"].unique().tolist() if hasattr(training, "decoded_index") else [c["species"] for c in SPECIES_CONFIGS]
-
-    # Overall MAPE (using first prediction step as point forecast)
+    # Use first step prediction
     pred_flat = pred_arr[:, 0] if pred_arr.ndim > 1 else pred_arr
     actual_flat = actual_arr[:, 0] if actual_arr.ndim > 1 else actual_arr
 
     results = {}
 
-    # Per-species using group indices
-    for gi, sp_name in enumerate(group_names):
-        mask = np.array(all_groups) == gi
-        if mask.sum() == 0:
-            continue
+    # Overall MAPE
+    valid = actual_flat > 0
+    if valid.any():
+        global_mape = float(np.mean(np.abs(pred_flat[valid] - actual_flat[valid]) / actual_flat[valid])) * 100
+        results["all_species"] = {"mape": round(global_mape, 2), "n_samples": int(valid.sum())}
+        print(f"  Global MAPE = {global_mape:.1f}% (n={valid.sum()})")
+
+    # Per-species MAPE
+    unique_groups = np.unique(groups_arr)
+    species_names = [c["species"] for c in SPECIES_CONFIGS]
+    for gi in unique_groups:
+        mask = groups_arr == gi
+        sp_name = species_names[int(gi)] if int(gi) < len(species_names) else f"group_{gi}"
         sp_pred = pred_flat[mask]
         sp_actual = actual_flat[mask]
-        valid = sp_actual > 0
-        if valid.sum() == 0:
+        sp_valid = sp_actual > 0
+        if sp_valid.sum() == 0:
             continue
-        mape = float(np.mean(np.abs(sp_pred[valid] - sp_actual[valid]) / sp_actual[valid])) * 100
+        mape = float(np.mean(np.abs(sp_pred[sp_valid] - sp_actual[sp_valid]) / sp_actual[sp_valid])) * 100
         results[sp_name] = {"mape": round(mape, 2), "n_samples": int(mask.sum())}
         print(f"  {sp_name}: MAPE = {mape:.1f}% (n={mask.sum()})")
-
-    # If group mapping failed, compute global MAPE
-    if not results:
-        valid = actual_flat > 0
-        mape = float(np.mean(np.abs(pred_flat[valid] - actual_flat[valid]) / actual_flat[valid])) * 100
-        results["all_species"] = {"mape": round(mape, 2), "n_samples": len(pred_flat)}
-        print(f"  Global MAPE = {mape:.1f}% (n={len(pred_flat)})")
 
     # Feature importance via attention weights
     try:
