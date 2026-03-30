@@ -41,14 +41,18 @@ FOREIGN_KW = [
     '파키스탄', '라스팔마스', '포클랜드', '멕시코',
 ]
 
-SASHIMI_SPECIES = ["넙치", "우럭", "방어", "참돔", "농어", "도다리", "감성돔"]
+SASHIMI_SPECIES = ["넙치", "우럭", "방어", "참돔", "농어", "도다리", "감성돔",
+                    "감숭어", "참숭어", "쭈꾸미", "민어", "깐굴", "바위굴", "수꽃게", "암꽃게"]
 
 SPECIES_CONFIGS = [
-    # Original sashimi species (for reference comparison)
     {"id": "감숭어_활_kg_중", "species": "감숭어", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False, "label": "감숭어 (mullet)", "method": "vmd"},
     {"id": "참숭어_활_kg_중", "species": "참숭어", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False, "label": "참숭어 (grey mullet)", "method": "vmd"},
     {"id": "쭈꾸미_선_box_중_dom", "species": "쭈꾸미", "state": "선", "pkg": "box", "spec": "중", "domestic": True, "smoothed": False, "label": "쭈꾸미 domestic (webfoot octopus)", "method": "vmd"},
     {"id": "민어_선_SP_중", "species": "민어", "state": "선", "pkg": "S/P", "spec": "중", "domestic": False, "smoothed": False, "label": "민어 (croaker)", "method": "vmd"},
+    {"id": "깐굴_선_box_소", "species": "깐굴", "state": "선", "pkg": "box", "spec": "소", "domestic": False, "smoothed": False, "label": "깐굴 (shucked oyster)", "method": "vmd"},
+    {"id": "바위굴_활_box_대", "species": "바위굴", "state": "활", "pkg": "box", "spec": "대", "domestic": False, "smoothed": False, "label": "바위굴 (rock oyster)", "method": "vmd"},
+    {"id": "수꽃게_활_kg_중", "species": "수꽃게", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False, "label": "수꽃게 (male blue crab)", "method": "vmd"},
+    {"id": "암꽃게_활_kg_중", "species": "암꽃게", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False, "label": "암꽃게 (female blue crab)", "method": "vmd"},
 ]
 
 KOREAN_HOLIDAYS = {
