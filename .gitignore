@@ -22,6 +22,9 @@ tests/logs/
 *.swp
 *.swo
 
+# Environment secrets
+.env
+
 # Claude Code local settings
 .claude/settings.local.json
 

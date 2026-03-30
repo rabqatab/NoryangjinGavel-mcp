@@ -139,6 +139,12 @@ class NoryangjinCrawler:
             else:
                 logger.warning(f"Failed to fetch page {page} for {date}")
 
+        # Normalize all fields (species aliases, spec padding, empty strings, price fix)
+        # and flag any species not in the canonical inventory
+        for record in all_records:
+            self.normalizer.normalize_price_record(record)
+            self.normalizer.check_new_species(record.species)
+
         # Write records if writer is configured
         if self.writer and all_records:
             self.writer.write_records(all_records, date)
