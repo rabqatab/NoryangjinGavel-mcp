@@ -42,7 +42,8 @@ def fetch_marine(lat, lon, start, end):
     url = "https://marine-api.open-meteo.com/v1/marine"
     params = {
         "latitude": lat, "longitude": lon,
-        "daily": "wave_height_max,wave_period_max",
+        "daily": "wave_height_max,wave_period_max,wave_direction_dominant,"
+                 "swell_wave_height_max,swell_wave_period_max",
         "start_date": start, "end_date": end,
         "timezone": "Asia/Seoul",
     }
@@ -62,7 +63,7 @@ def fetch_weather(lat, lon, start, end):
         "latitude": lat, "longitude": lon,
         "daily": "temperature_2m_mean,temperature_2m_max,temperature_2m_min,"
                  "wind_speed_10m_max,wind_gusts_10m_max,"
-                 "precipitation_sum",
+                 "precipitation_sum,pressure_msl_mean,sunshine_duration",
         "start_date": start, "end_date": end,
         "timezone": "Asia/Seoul",
     }
@@ -99,19 +100,29 @@ def fetch_all(start_date, end_date):
 
             # Merge by date
             dates = marine.get("time", weather.get("time", []))
+            n_dates = len(dates)
+            def safe_get(data, key, idx):
+                vals = data.get(key, [])
+                return vals[idx] if idx < len(vals) else None
+
             for i, d in enumerate(dates):
                 row = {
                     "date": d.replace("-", "."),
                     "location": loc_id,
                     "location_name": loc["name"],
-                    "wave_height_max": marine.get("wave_height_max", [None] * len(dates))[i],
-                    "wave_period_max": marine.get("wave_period_max", [None] * len(dates))[i],
-                    "temp_mean": weather.get("temperature_2m_mean", [None] * len(dates))[i],
-                    "temp_max": weather.get("temperature_2m_max", [None] * len(dates))[i],
-                    "temp_min": weather.get("temperature_2m_min", [None] * len(dates))[i],
-                    "wind_speed_max": weather.get("wind_speed_10m_max", [None] * len(dates))[i],
-                    "wind_gust_max": weather.get("wind_gusts_10m_max", [None] * len(dates))[i],
-                    "precipitation": weather.get("precipitation_sum", [None] * len(dates))[i],
+                    "wave_height_max": safe_get(marine, "wave_height_max", i),
+                    "wave_period_max": safe_get(marine, "wave_period_max", i),
+                    "wave_direction": safe_get(marine, "wave_direction_dominant", i),
+                    "swell_height_max": safe_get(marine, "swell_wave_height_max", i),
+                    "swell_period_max": safe_get(marine, "swell_wave_period_max", i),
+                    "temp_mean": safe_get(weather, "temperature_2m_mean", i),
+                    "temp_max": safe_get(weather, "temperature_2m_max", i),
+                    "temp_min": safe_get(weather, "temperature_2m_min", i),
+                    "wind_speed_max": safe_get(weather, "wind_speed_10m_max", i),
+                    "wind_gust_max": safe_get(weather, "wind_gusts_10m_max", i),
+                    "precipitation": safe_get(weather, "precipitation_sum", i),
+                    "pressure_msl": safe_get(weather, "pressure_msl_mean", i),
+                    "sunshine_hours": round(safe_get(weather, "sunshine_duration", i) / 3600, 2) if safe_get(weather, "sunshine_duration", i) else None,
                 }
                 all_rows.append(row)
 
@@ -120,9 +131,11 @@ def fetch_all(start_date, end_date):
 
     # Write CSV
     fieldnames = ["date", "location", "location_name",
-                  "wave_height_max", "wave_period_max",
+                  "wave_height_max", "wave_period_max", "wave_direction",
+                  "swell_height_max", "swell_period_max",
                   "temp_mean", "temp_max", "temp_min",
-                  "wind_speed_max", "wind_gust_max", "precipitation"]
+                  "wind_speed_max", "wind_gust_max",
+                  "precipitation", "pressure_msl", "sunshine_hours"]
 
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
