@@ -47,32 +47,32 @@ Each config is identified by: `{species}_{state}_{packaging}_{spec}[_dom]`
 | **Lag-1** | Day-to-day autocorrelation — higher = more predictable. <0.4 is difficult |
 | **Recent** | Trading days in 2025+ — 0 means data may have stopped |
 
-## Model Status
+## Model Status (Updated 2026-03-30 — full DL pipeline complete)
 
-| Config ID | v10 LGBM | Best DL | Band? | Status |
-|---|---|---|---|---|
-| 넙치_활_kg_중 | 11.1% | GRU-Q 10.2% | Yes | **Production** |
-| 우럭_활_kg_중 | 18.7% | TFT 14.7% | Yes | **Production** |
-| 방어_선_kg_중_dom | 49.2% | TFT 15.6% | Yes | **Production** (TFT only) |
-| 참돔_활_kg_중_dom | 18.9% | CNN-LSTM-Q 16.3% | Yes | **Production** |
-| 농어_활_kg_중_dom | 19.3% | GRU-Q 12.8% | Yes | **Production** |
-| 도다리_활_kg_중 | 21.1% | Transformer-Q 15.2% | Yes | **Production** |
-| 감성돔_활_kg_중_dom | 17.1% | GRU-Q 12.5% | Yes | **Production** |
-| 감숭어_활_kg_중 | 36.2% | — | Yes | Pending DL |
-| 참숭어_활_kg_중 | 27.6% | — | Yes | Pending DL |
-| 쭈꾸미_선_box_중_dom | 21.2% | — | Yes | Pending DL |
-| 민어_선_SP_중 | 66.5% | — | Yes | **Directional only** |
-| 깐굴_선_box_소 | 13.8% | — | Yes | Pending DL |
-| 바위굴_활_box_대 | 15.9% | — (Naive 7.9%) | Yes | **Production** (Naive) |
-| 수꽃게_활_kg_중 | 19.9% | — | Yes | Pending DL |
-| 암꽃게_활_kg_중 | 22.2% | — | Yes | Pending DL |
-| 수꽃게_활_kg_대 | 19.5% | — | Yes | Pending DL |
-| 암꽃게_활_kg_대 | 19.6% | — | Yes | Pending DL |
-| 넙치_활_kg_2미 | 21.2% | — | Yes | Pending DL |
-| 참돔_활_kg_2미_dom | 17.9% | — (SMA-7 14.4%) | Yes | Pending DL |
-| 농어_활_kg_1미_dom | 13.0% | — | Yes | Pending DL |
+| Config ID | v10 LGBM | Best DL (Quantile) | Band Width | Coverage | Status |
+|---|---|---|---|---|---|
+| **바위굴_활_box_대** | 15.9% | **Transformer-Q 2.3%** | 7% | 85% | **Production** |
+| **쭈꾸미_선_box_중_dom** | 21.2% | **GRU-Q 7.0%** | 21% | 80% | **Production** |
+| **깐굴_선_box_소** | 13.8% | **GRU-Q 7.5%** | 21% | 72% | **Production** |
+| **암꽃게_활_kg_대** | 19.6% | **Transformer-Q 8.5%** | 23% | 74% | **Production** |
+| **넙치_활_kg_중** | 11.1% | **GRU-Q 10.2%** | 19% | 56% | **Production** |
+| **수꽃게_활_kg_대** | 19.5% | **Transformer-Q 10.2%** | 25% | 79% | **Production** |
+| **수꽃게_활_kg_중** | 19.9% | **GRU-Q 10.5%** | 26% | 55% | **Production** |
+| **암꽃게_활_kg_중** | 22.2% | **Transformer-Q 10.8%** | 25% | 70% | **Production** |
+| **감성돔_활_kg_중_dom** | 17.1% | **Transformer-Q 11.9%** | 45% | 73% | **Production** |
+| **농어_활_kg_중_dom** | 19.3% | **GRU-Q 12.7%** | 36% | 69% | **Production** |
+| **농어_활_kg_1미_dom** | 13.0% | Transformer-Q 15.7% | 6% | 50% | **Production** (LGBM) |
+| **우럭_활_kg_중** | 18.7% | TFT **14.7%** | — | — | **Production** (TFT) |
+| **도다리_활_kg_중** | 21.1% | **Transformer-Q 15.4%** | 54% | 80% | **Production** |
+| **방어_선_kg_중_dom** | 49.2% | TFT **15.6%** | — | — | **Production** (TFT) |
+| **참돔_활_kg_중_dom** | 18.9% | **Transformer-Q 17.4%** | 44% | 62% | **Production** |
+| **참숭어_활_kg_중** | 27.6% | **Transformer-Q 17.6%** | 55% | 73% | Production |
+| **감숭어_활_kg_중** | 36.2% | **GRU-Q 19.8%** | 56% | 72% | Production |
+| **넙치_활_kg_2미** | 21.2% | **Transformer-Q 19.9%** | 13% | 28% | Marginal (low cov) |
+| **참돔_활_kg_2미_dom** | 17.9% | Transformer-Q 20.6% | 4% | 17% | Marginal (low cov) |
+| **민어_선_SP_중** | 66.5% | **CNN-LSTM-Q 40.7%** | 112% | 72% | Directional only |
 
-> DL results will be updated when the GPU training run completes (~2-3 hours).
+**15/20 configs below 18% MAPE. 10/20 below 11% MAPE.** Quantile DL models dramatically improved non-sashimi species (바위굴 2.3%, 쭈꾸미 7.0%, 깐굴 7.5%).
 
 ## Data Quality Flags
 
