@@ -495,16 +495,26 @@ def build_features_68(series: dict, ctx: dict, target_sp: str) -> tuple[np.ndarr
         ]
         feat_rows.append(features)
 
-    return np.array(feat_rows, dtype=np.float64), min_offset
+    result = np.array(feat_rows, dtype=np.float64)
+    # Replace NaN/Inf with 0 — these arise from division by zero in momentum/ratio features
+    # on gap-filled days where forward-filled values create zero denominators
+    result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
+    return result, min_offset
 
 
 def normalize_features(train_features: np.ndarray, test_features: np.ndarray):
     """Per-feature z-score normalization. Returns normalized arrays and stats."""
+    # Replace any remaining NaN/Inf before computing stats
+    train_features = np.nan_to_num(train_features, nan=0.0, posinf=0.0, neginf=0.0)
+    test_features = np.nan_to_num(test_features, nan=0.0, posinf=0.0, neginf=0.0)
     mean = train_features.mean(axis=0)
     std = train_features.std(axis=0)
     std[std < 1e-8] = 1.0  # avoid division by zero
     train_norm = (train_features - mean) / std
     test_norm = (test_features - mean) / std
+    # Final safety: clamp extreme z-scores
+    train_norm = np.clip(train_norm, -10, 10)
+    test_norm = np.clip(test_norm, -10, 10)
     return train_norm, test_norm, mean, std
 
 
