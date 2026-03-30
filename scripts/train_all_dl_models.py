@@ -72,16 +72,33 @@ FOREIGN_KW = [
     "파키스탄", "라스팔마스", "포클랜드", "멕시코",
 ]
 
-SASHIMI_SPECIES = ["넙치", "우럭", "방어", "참돔", "농어", "도다리", "감성돔"]
+SASHIMI_SPECIES = ["넙치", "우럭", "방어", "참돔", "농어", "도다리", "감성돔",
+                    "감숭어", "참숭어", "쭈꾸미", "민어", "깐굴", "바위굴", "수꽃게", "암꽃게"]
 
 SPECIES_CONFIGS = [
-    {"species": "넙치", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False},
-    {"species": "우럭", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False},
-    {"species": "방어", "state": "선", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": True, "regime_split": True},
-    {"species": "참돔", "state": "활", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": False},
-    {"species": "농어", "state": "활", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": False},
-    {"species": "도다리", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": True},
-    {"species": "감성돔", "state": "활", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": False},
+    # Original sashimi species (중 grade)
+    {"id": "넙치_활_kg_중", "species": "넙치", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False},
+    {"id": "우럭_활_kg_중", "species": "우럭", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False},
+    {"id": "방어_선_kg_중_dom", "species": "방어", "state": "선", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": True, "regime_split": True},
+    {"id": "참돔_활_kg_중_dom", "species": "참돔", "state": "활", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": False},
+    {"id": "농어_활_kg_중_dom", "species": "농어", "state": "활", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": False},
+    {"id": "도다리_활_kg_중", "species": "도다리", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": True},
+    {"id": "감성돔_활_kg_중_dom", "species": "감성돔", "state": "활", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": False},
+    # Additional species
+    {"id": "감숭어_활_kg_중", "species": "감숭어", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False},
+    {"id": "참숭어_활_kg_중", "species": "참숭어", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False},
+    {"id": "쭈꾸미_선_box_중_dom", "species": "쭈꾸미", "state": "선", "pkg": "box", "spec": "중", "domestic": True, "smoothed": False},
+    {"id": "민어_선_SP_중", "species": "민어", "state": "선", "pkg": "S/P", "spec": "중", "domestic": False, "smoothed": False},
+    {"id": "깐굴_선_box_소", "species": "깐굴", "state": "선", "pkg": "box", "spec": "소", "domestic": False, "smoothed": False},
+    {"id": "바위굴_활_box_대", "species": "바위굴", "state": "활", "pkg": "box", "spec": "대", "domestic": False, "smoothed": False},
+    {"id": "수꽃게_활_kg_중", "species": "수꽃게", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False},
+    {"id": "암꽃게_활_kg_중", "species": "암꽃게", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False},
+    # Premium 활어 grades (大/1미/2미)
+    {"id": "수꽃게_활_kg_대", "species": "수꽃게", "state": "활", "pkg": "kg", "spec": "대", "domestic": False, "smoothed": False},
+    {"id": "암꽃게_활_kg_대", "species": "암꽃게", "state": "활", "pkg": "kg", "spec": "대", "domestic": False, "smoothed": False},
+    {"id": "넙치_활_kg_2미", "species": "넙치", "state": "활", "pkg": "kg", "spec": "2미", "domestic": False, "smoothed": False},
+    {"id": "참돔_활_kg_2미_dom", "species": "참돔", "state": "활", "pkg": "kg", "spec": "2미", "domestic": True, "smoothed": False},
+    {"id": "농어_활_kg_1미_dom", "species": "농어", "state": "활", "pkg": "kg", "spec": "1미", "domestic": True, "smoothed": False},
 ]
 
 KOREAN_HOLIDAYS = {
@@ -1623,9 +1640,10 @@ def main():
     if not tft_results:
         print("  (no TFT results available)")
 
-    # Process each species
+    # Process each species config
     for cfg in SPECIES_CONFIGS:
-        sp = cfg["species"]
+        sp = cfg.get("id", cfg["species"])
+        species_name = cfg["species"]
         use_smoothed = cfg.get("smoothed", False)
         use_regime = cfg.get("regime_split", False)
 
@@ -1648,7 +1666,7 @@ def main():
             continue
 
         # Build 68 features (computed on winsorized/origin-weighted prices)
-        features, min_offset = build_features_68(series, ctx, sp)
+        features, min_offset = build_features_68(series, ctx, species_name)
         # Trim leading rows that lack enough history for percentile_90d etc.
         features = features[min_offset:]
         prices = prices[min_offset:]
@@ -1861,7 +1879,7 @@ def main():
 
     # ── Results Summary ───────────────────────────────────────────
 
-    species_list = [cfg["species"] for cfg in SPECIES_CONFIGS if cfg["species"] in raw_results]
+    species_list = [cfg.get("id", cfg["species"]) for cfg in SPECIES_CONFIGS if cfg.get("id", cfg["species"]) in raw_results]
 
     # Table 1: Raw DL models
     raw_model_names = trainable_models + (["TFT"] if tft_results else [])
@@ -1986,9 +2004,10 @@ def main():
     quantile_results = {}  # {species: {model: {mape_p50, coverage, band_width_avg, band_pct, conformal_*}}}
 
     for cfg in SPECIES_CONFIGS:
-        sp = cfg["species"]
+        sp = cfg.get("id", cfg["species"])
+        species_name = cfg["species"]
         if sp not in species_cache:
-            print(f"\n  [{sp}] SKIP: no cached data (species was skipped earlier)")
+            print(f"\n  [{sp}] SKIP: no cached data (config was skipped earlier)")
             continue
 
         cache = species_cache[sp]
