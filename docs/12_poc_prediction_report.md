@@ -11,36 +11,44 @@ Over 8 model iterations spanning CPU (LightGBM with 68 features, VMD decompositi
 
 ### Full DL Model Comparison (7 models × 7 species, GPU)
 
+Two runs: 12-feature (basic) and 68-feature (same features as LightGBM v6) for fair comparison.
+
+**68-feature results (fair comparison with LightGBM):**
+
 | Model | 넙치 | 우럭 | 방어 | 참돔 | 농어 | 도다리 | 감성돔 | AVG |
 |---|---|---|---|---|---|---|---|---|
-| **TFT** | 18.1% | **14.7%** | **15.6%** | **20.8%** | 51.0% | **27.2%** | 23.3% | **24.4%** |
-| PatchTST | 19.8% | 32.8% | 139.3% | 28.9% | 19.6% | 34.1% | 28.3% | 43.3% |
-| CNN-LSTM | 18.5% | 32.1% | 160.7% | 27.0% | 20.4% | 30.2% | 26.1% | 45.0% |
-| Transformer | 18.2% | 32.1% | 173.8% | 26.8% | **18.4%** | 30.1% | **21.1%** | 45.8% |
-| GRU | **17.0%** | 31.7% | 168.9% | 27.3% | 19.6% | 31.6% | 25.4% | 45.9% |
-| BiLSTM+Attn | 17.8% | 32.3% | 181.3% | 27.1% | 19.2% | 31.0% | 29.0% | 48.2% |
-| LSTM | 17.4% | 32.1% | 185.3% | 27.5% | 20.2% | 31.1% | 26.0% | 48.5% |
+| **TFT** | 18.1% | **14.7%** | **15.6%** | **20.8%** | 51.0%* | 27.2% | 23.3% | **24.4%** |
+| **LightGBM v6** | **14.8%** | 24.1% | 62.6% | 26.5% | 23.6% | **25.1%** | 22.8% | **28.5%** |
+| GRU | 17.9% | 32.4% | 188.7% | 25.5% | **18.9%** | 26.9% | 22.7% | 47.6% |
+| CNN-LSTM | 20.6% | 33.0% | 149.9% | 25.6% | 19.6% | 36.1% | **21.6%** | 43.8% |
+| LSTM | 20.5% | 33.2% | 150.2% | 26.3% | 20.4% | 31.6% | 26.5% | 44.1% |
+| Transformer | 18.1% | 32.4% | 162.9% | 24.8% | 19.8% | 28.2% | 23.8% | 44.3% |
+| BiLSTM+Attn | 21.6% | 34.0% | 150.1% | 26.3% | 19.7% | 34.5% | 24.7% | 44.4% |
+| PatchTST | 20.5% | 33.0% | 196.5% | 26.8% | 20.1% | 35.1% | 27.2% | 51.3% |
 
-**Rankings:** TFT (24.4%) >> PatchTST (43.3%) > CNN-LSTM (45.0%) > Transformer (45.8%) > GRU (45.9%) > BiLSTM+Attn (48.2%) > LSTM (48.5%)
+*TFT 농어 51% is a gap-filling artifact — forward-filled stale prices mislead attention.
+
+**Rankings:** TFT (24.4%) >> LightGBM (28.5%) >> CNN-LSTM (43.8%) > LSTM (44.1%) > Transformer (44.3%) > BiLSTM+Attn (44.4%) > GRU (47.6%) > PatchTST (51.3%)
 
 **DL findings:**
-- TFT is the only model that solves 방어 (15.6% vs 139-185% for all others)
-- Transformer (Informer-style) is a dark horse — best for 농어 (18.4%) and 감성돔 (21.1%)
-- GRU beats LSTM everywhere — confirming the literature (fewer params, same or better)
-- BiLSTM+Attention adds noise rather than signal for these relatively simple series
-- 방어 is the litmus test: only TFT's variable selection + attention can learn its seasonal pattern
+- **TFT and LightGBM are the clear top 2** — all other DL models are 15-25% worse on average
+- **TFT is the only model that solves 방어** (15.6% vs 150-197% for all others). Its variable selection + attention mechanism uniquely handles this volatile species.
+- **68 features don't help most DL models** — GRU got worse (-4%), PatchTST much worse (-19%). Only LSTM/CNN-LSTM/Transformer improved slightly (+3-9%). Deep learning models need careful feature selection; more features ≠ better.
+- **GRU beats LSTM on 넙치 and 농어** but not overall — LSTM benefits more from additional features
+- **CNN-LSTM is best for 감성돔** (21.6%) — the 1D convolution captures local patterns in the rich feature set
+- **방어 remains the litmus test:** only TFT solves it. All other DL models produce 150-197% MAPE.
 
-### Best-of-Breed Results (Final — CPU + all 7 DL models)
+### Best-of-Breed Results (Final — CPU + all 7 DL models, 68-feature fair comparison)
 
 | Species | Best Model | MAPE | Runner-up | Status |
 |---|---|---|---|---|
-| **넙치** (flatfish) | v6 VMD+LightGBM | **14.8%** | GRU 17.0% | Production ready |
+| **넙치** (flatfish) | v6 VMD+LightGBM | **14.8%** | GRU 17.9% | Production ready |
 | **우럭** (rockfish) | TFT (GPU) | **14.7%** | LightGBM 24.1% | Production ready |
 | **방어** (yellowtail) | TFT (GPU) | **15.6%** | LightGBM 62.6% | Production ready |
-| **농어** (sea bass) | Transformer (GPU) | **18.4%** | GRU 19.6% | Production ready |
-| **참돔** (seabream) | TFT (GPU) | **20.8%** | Transformer 26.8% | Usable |
-| **감성돔** (black porgy) | Transformer (GPU) | **21.1%** | LightGBM 22.8% | Usable |
-| **도다리** (flounder) | v7 STL-VMD+LightGBM | **25.1%** | TFT 27.2% | Usable (seasonal) |
+| **농어** (sea bass) | GRU (GPU, 68f) | **18.9%** | Transformer 19.8% | Production ready |
+| **참돔** (seabream) | TFT (GPU) | **20.8%** | Transformer 24.8% | Usable |
+| **감성돔** (black porgy) | CNN-LSTM (GPU, 68f) | **21.6%** | LightGBM 22.8% | Usable |
+| **도다리** (flounder) | v7 STL-VMD+LightGBM | **25.1%** | GRU 26.9% | Usable (seasonal) |
 
 ### Full Progression: v1 → TFT
 
@@ -57,12 +65,11 @@ Over 8 model iterations spanning CPU (LightGBM with 68 features, VMD decompositi
 *농어 TFT result (51%) is an anomaly — gap-filling creates stale prices for this sporadically-traded species. LightGBM with its feature-based approach handles sparse data better.
 
 **Key insights:**
-- **No single model wins for all species.** LightGBM wins for 넙치 and 도다리, TFT wins for 우럭/방어/참돔, Transformer wins for 농어/감성돔.
-- **방어 was the biggest success story:** from 174% (unpredictable) to 15.6% (production-ready) — TFT is the *only* DL model that solves it (all others: 139-185%).
-- **Transformer is the surprise winner** for 농어 (18.4%) and 감성돔 (21.1%), beating both LightGBM and TFT.
-- **GRU > LSTM everywhere** — confirming the literature. BiLSTM+Attention adds noise.
+- **No single model wins for all species.** LightGBM wins for 넙치/도다리, TFT wins for 우럭/방어/참돔, GRU wins for 농어, CNN-LSTM wins for 감성돔.
+- **TFT and LightGBM are the clear top 2** — avg MAPE 24.4% and 28.5% respectively. All other DL models average 43-51%.
+- **방어 was the biggest success story:** from 174% to 15.6% — TFT is the *only* model (CPU or GPU) that solves it.
+- **68 features don't help most DL models** — only TFT and LightGBM can effectively use high-dimensional feature sets. Simpler DL models get worse with more features.
 - **6/7 species now below 22% MAPE**, 4/7 below 19%. Production-viable for consumer guidance.
-- The 68 features in v6 account for **31-47% of total feature importance** — calendar, supply, and technical indicators all contribute.
 
 ---
 
