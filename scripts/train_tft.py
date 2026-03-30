@@ -239,9 +239,11 @@ def train_and_evaluate():
 
     df = build_tft_dataframe()
 
-    # Train/test split by time_idx (last 20% as test)
-    max_time = df.groupby("group_id")["time_idx"].max().min()
-    train_cutoff = int(max_time * 0.8)
+    # Train/test split by time_idx (last 20% as test per group)
+    # Use each group's own 80% mark, then take the minimum to ensure all groups have test data
+    group_maxes = df.groupby("group_id")["time_idx"].max()
+    train_cutoff = int(group_maxes.min() * 0.8)
+    print(f"  Train cutoff: time_idx={train_cutoff} (min group max={group_maxes.min()})")
 
     max_encoder_length = 30
     max_prediction_length = 7
@@ -307,36 +309,55 @@ def train_and_evaluate():
 
     trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
-    # Evaluate
+    # Evaluate per species using raw predictions
     print("\n=== Evaluation ===")
-    predictions = tft.predict(val_dataloader, return_x=True)
-    actuals = torch.cat([y[0] for x, y in iter(val_dataloader)])
+    raw_preds = tft.predict(val_dataloader, mode="raw", return_x=True)
 
-    # Per-species MAPE
+    # Collect predictions and actuals per batch
+    all_preds = []
+    all_actuals = []
+    all_groups = []
+
+    for x, y in val_dataloader:
+        batch_preds = tft.predict(x, mode="prediction")
+        # batch_preds shape: (batch, horizon) — point predictions (median)
+        all_preds.append(batch_preds.cpu().numpy())
+        all_actuals.append(y[0].cpu().numpy())
+        # Get group ids from decoder input
+        all_groups.extend(x["groups"].cpu().numpy().flatten().tolist())
+
+    pred_arr = np.concatenate(all_preds, axis=0)
+    actual_arr = np.concatenate(all_actuals, axis=0)
+
+    # Map group indices back to species names
+    group_names = training.decoded_index["group_id"].unique().tolist() if hasattr(training, "decoded_index") else [c["species"] for c in SPECIES_CONFIGS]
+
+    # Overall MAPE (using first prediction step as point forecast)
+    pred_flat = pred_arr[:, 0] if pred_arr.ndim > 1 else pred_arr
+    actual_flat = actual_arr[:, 0] if actual_arr.ndim > 1 else actual_arr
+
     results = {}
-    for cfg in SPECIES_CONFIGS:
-        sp = cfg["species"]
-        # Get indices for this species
-        sp_mask = df[df["time_idx"] > train_cutoff]["group_id"] == sp
 
-        if sp_mask.sum() == 0:
+    # Per-species using group indices
+    for gi, sp_name in enumerate(group_names):
+        mask = np.array(all_groups) == gi
+        if mask.sum() == 0:
             continue
+        sp_pred = pred_flat[mask]
+        sp_actual = actual_flat[mask]
+        valid = sp_actual > 0
+        if valid.sum() == 0:
+            continue
+        mape = float(np.mean(np.abs(sp_pred[valid] - sp_actual[valid]) / sp_actual[valid])) * 100
+        results[sp_name] = {"mape": round(mape, 2), "n_samples": int(mask.sum())}
+        print(f"  {sp_name}: MAPE = {mape:.1f}% (n={mask.sum()})")
 
-        # Simple overall MAPE calculation
-        pred_np = predictions.output.cpu().numpy()
-        actual_np = actuals.cpu().numpy()
-
-        # Median quantile (index 3 of 7 quantiles)
-        pred_median = pred_np[:, :, 3] if pred_np.ndim == 3 else pred_np
-
-        mask = actual_np > 0
-        if mask.any():
-            mape = float(np.mean(np.abs(pred_median[mask] - actual_np[mask]) / actual_np[mask])) * 100
-        else:
-            mape = 999
-
-        results[sp] = {"mape": round(mape, 2)}
-        print(f"  {sp}: MAPE = {mape:.1f}%")
+    # If group mapping failed, compute global MAPE
+    if not results:
+        valid = actual_flat > 0
+        mape = float(np.mean(np.abs(pred_flat[valid] - actual_flat[valid]) / actual_flat[valid])) * 100
+        results["all_species"] = {"mape": round(mape, 2), "n_samples": len(pred_flat)}
+        print(f"  Global MAPE = {mape:.1f}% (n={len(pred_flat)})")
 
     # Feature importance via attention weights
     try:
