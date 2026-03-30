@@ -974,7 +974,7 @@ def train_model(model: nn.Module, train_loader: DataLoader, val_loader: DataLoad
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", patience=5, factor=0.5,
     )
-    criterion = nn.MSELoss()
+    criterion = nn.L1Loss()  # MAE — beats MSE by 1-2% MAPE (loss comparison study)
 
     best_val_loss = float("inf")
     best_state = None
