@@ -24,6 +24,20 @@
 
 ---
 
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| **CV (Coefficient of Variation)** | Standard deviation divided by mean (std/mean). Measures relative price spread — a CV of 0.5 means prices vary by ~50% around the mean. |
+| **Within-packaging CV** | Price spread among rows sharing the same packaging type on a given day. |
+| **Across-packaging CV** | Price spread across all packaging types combined on a given day. |
+| **CV ratio** | Across-CV / Within-CV. If >1.5x, packaging types represent different price bands and should not be blended. |
+| **Lag-1 autocorrelation** | Correlation between today's price and yesterday's price. High values (>0.8) indicate a smooth, predictable series. |
+| **Spec class** | Category of the `spec` field: `size_grade` (대/중/소/특대), `count` (N미), `count_range` (N/M미), `weight_range` (N/M grams, e.g. 300/400 = 300-400g per piece), `other`. |
+| **Dominant packaging** | The packaging type with the highest row share for a species. Used as a filter when blending is invalid. |
+
+---
+
 ## Phase 1: Data Census
 
 ### EDA-1.0: State Distribution
