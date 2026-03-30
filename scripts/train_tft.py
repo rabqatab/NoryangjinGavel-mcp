@@ -173,58 +173,85 @@ def build_tft_dataframe():
             print(f"  {sp}: skip ({len(sorted_dates)} days)")
             continue
 
-        prices = [float(np.mean(day_data[d]["prices"])) for d in sorted_dates]
-        ema7 = ema(prices, 7)
-        ema30 = ema(prices, 30)
-        rsi14 = rsi(prices, 14)
+        # Build continuous daily index with forward-fill for non-trading days
+        from datetime import timedelta
+        first_dt = parse_date(sorted_dates[0])
+        last_dt = parse_date(sorted_dates[-1])
+        all_calendar_days = []
+        cur = first_dt
+        while cur <= last_dt:
+            all_calendar_days.append(cur.strftime("%Y.%m.%d"))
+            cur += timedelta(days=1)
 
-        for idx, d in enumerate(sorted_dates):
-            if idx < 30: continue  # Need lookback
+        # Forward-fill: non-trading days carry the last trading day's values
+        filled_prices = []
+        filled_data = []  # (price, n_lots, n_origins, qty, is_trading_day)
+        last_trading = None
+        for d in all_calendar_days:
+            if d in day_data:
+                dd = day_data[d]
+                p = float(np.mean(dd["prices"]))
+                last_trading = (p, len(dd["prices"]), len(dd["origins"]), dd["qty"], 1)
+            # Forward-fill from last trading day
+            if last_trading is not None:
+                filled_prices.append(last_trading[0])
+                filled_data.append(last_trading)
+            else:
+                continue  # Skip leading non-trading days before first trade
 
+        if len(filled_prices) < 200:
+            print(f"  {sp}: skip after fill ({len(filled_prices)} days)")
+            continue
+
+        # Recompute technical indicators on continuous filled series
+        prices_arr = filled_prices
+        ema7 = ema(prices_arr, 7)
+        ema30 = ema(prices_arr, 30)
+        rsi14 = rsi(prices_arr, 14)
+
+        # Rebuild calendar days list (trimmed to match filled data)
+        start_idx = next(i for i, d in enumerate(all_calendar_days) if d in day_data)
+        calendar_days = all_calendar_days[start_idx:start_idx + len(filled_prices)]
+
+        print(f"  {sp}: {len(sorted_dates)} trading days → {len(filled_prices)} continuous days")
+
+        for idx in range(30, len(filled_prices)):
+            d = calendar_days[idx]
             dt = parse_date(d)
-            di = date_idx[d]
+            di = date_idx.get(d, date_idx.get(sorted_dates[-1], 0))
             hol = days_to_holiday(dt)
-            dd = day_data[d]
+            p, n_lots_val, n_origins_val, qty_val, is_trade = filled_data[idx]
 
-            # Time index (monotonic per group)
+            # Time index: continuous counter per species
             if sp not in time_idx_counter:
                 time_idx_counter[sp] = 0
             else:
                 time_idx_counter[sp] += 1
 
             row = {
-                # Identifiers
                 "group_id": sp,
                 "species_id": cfg["id"],
                 "time_idx": time_idx_counter[sp],
                 "date": d,
-
-                # Target
-                "price": prices[idx],
-
-                # Known future (calendar)
+                "price": prices_arr[idx],
                 "dow": dt.weekday(),
                 "month": dt.month,
                 "woy": dt.isocalendar()[1],
                 "is_weekend": int(dt.weekday() >= 5),
                 "days_to_seollal": hol["seollal"],
                 "days_to_chuseok": hol["chuseok"],
-
-                # Observed past (price-derived)
                 "ema_7": ema7[idx],
                 "ema_30": ema30[idx],
                 "rsi_14": rsi14[idx],
-                "price_7d_avg": np.mean(prices[max(0, idx-7):idx]),
-                "price_30d_avg": np.mean(prices[max(0, idx-30):idx]),
-                "price_std_7d": np.std(prices[max(0, idx-7):idx]),
-
-                # Observed past (supply)
-                "n_lots": len(dd["prices"]),
-                "n_origins": len(dd["origins"]),
-                "quantity": dd["qty"],
-                "own_qty_7d": sp_qty_7d[sp][di],
-                "other_sashimi_7d": total_sashimi_7d[di] - sp_qty_7d[sp][di],
-                "market_lots_7d": market_lots_7d[di],
+                "price_7d_avg": np.mean(prices_arr[max(0, idx-7):idx]),
+                "price_30d_avg": np.mean(prices_arr[max(0, idx-30):idx]),
+                "price_std_7d": np.std(prices_arr[max(0, idx-7):idx]),
+                "n_lots": n_lots_val,
+                "n_origins": n_origins_val,
+                "quantity": qty_val,
+                "own_qty_7d": sp_qty_7d[sp][di] if di < len(sp_qty_7d[sp]) else 0,
+                "other_sashimi_7d": (total_sashimi_7d[di] - sp_qty_7d[sp][di]) if di < len(total_sashimi_7d) else 0,
+                "market_lots_7d": market_lots_7d[di] if di < len(market_lots_7d) else 0,
             }
             rows.append(row)
 
@@ -239,16 +266,17 @@ def train_and_evaluate():
 
     df = build_tft_dataframe()
 
-    # Train/test split by time_idx (last 20% as test per group)
-    # Use each group's own 80% mark, then take the minimum to ensure all groups have test data
+    # Train/test split: last 20% of each group's time for validation
     group_maxes = df.groupby("group_id")["time_idx"].max()
     train_cutoff = int(group_maxes.min() * 0.8)
+    # Validation needs encoder context, so include some training data overlap
+    val_min_idx = train_cutoff - 30  # encoder lookback
     print(f"  Train cutoff: time_idx={train_cutoff} (min group max={group_maxes.min()})")
 
     max_encoder_length = 30
     max_prediction_length = 7
 
-    # Create TimeSeriesDataSet
+    # Create training dataset
     training = TimeSeriesDataSet(
         df[df["time_idx"] <= train_cutoff],
         time_idx="time_idx",
@@ -269,10 +297,11 @@ def train_and_evaluate():
         add_encoder_length=True,
     )
 
+    # Validation: include encoder overlap so sequences can be formed
+    val_df = df[df["time_idx"] >= val_min_idx]
     validation = TimeSeriesDataSet.from_dataset(
         training,
-        df[df["time_idx"] > train_cutoff],
-        predict=True,
+        val_df,
         stop_randomization=True,
     )
 
