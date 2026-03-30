@@ -32,6 +32,8 @@
 - **154** species are multi-state. Of these, **83** have >1.5x price divergence between states.
 - **Assertion result:** State MUST be a partition dimension for multi-state species with price divergence.
 
+![State Price Divergence](images/eda/eda_1_0_state_divergence.png)
+
 Notable divergences (top 10 species):
 
 | Species | Divergent? | States & Mean Prices (KRW) |
@@ -50,6 +52,8 @@ Notable divergences (top 10 species):
 **5/10 top species need state partitioning.** The remaining 5 can filter to their dominant state.
 
 ### EDA-1.1: Packaging Dominance
+
+![Packaging Dominance Distribution](images/eda/eda_1_1_packaging_dominance.png)
 
 - **298/504** species (59%) have >80% in one packaging type.
 - **36 species** have no packaging type >50% — these are "heterogeneous" (EDA-4.1).
@@ -70,6 +74,8 @@ Top 10 dominant packaging:
 | 고등어 | S/P | 64.8% | 8 |
 
 ### EDA-1.2: Spec Type Taxonomy
+
+![Spec Type Distribution](images/eda/eda_1_2_spec_taxonomy.png)
 
 Global distribution:
 
@@ -100,6 +106,8 @@ Origin is a moderate row-multiplier — most species have 2 origins per day, a f
 
 ### EDA-2.1: Packaging CV Ratio
 
+![Packaging CV Ratio](images/eda/eda_2_1_packaging_cv.png)
+
 **Threshold: 1.5x** (50% noise increase degrades ARIMA MAPE by 3-5 pp)
 
 | Species | Within-Pkg CV | Across-Pkg CV | Ratio | Verdict |
@@ -127,6 +135,8 @@ Origin is a moderate row-multiplier — most species have 2 origins per day, a f
 
 ### EDA-2.1b: Spec CV Ratio
 
+![Spec CV Ratio](images/eda/eda_2_1b_spec_cv.png)
+
 **This is the most impactful finding.** Spec segments price heavily within packaging.
 
 | Species | Within-Spec CV | Across-Spec CV | Ratio | Verdict |
@@ -146,6 +156,8 @@ Origin is a moderate row-multiplier — most species have 2 origins per day, a f
 
 ### EDA-2.2: Per-Packaging Time Series Correlation
 
+![Packaging Correlation](images/eda/eda_2_2_pkg_correlation.png)
+
 **All 10 species show essentially zero correlation between packaging types.**
 
 | Species | Pkg A | Pkg B | Corr (W) | Price Ratio | Stable? |
@@ -164,6 +176,8 @@ Origin is a moderate row-multiplier — most species have 2 origins per day, a f
 **No species exceeds the 0.85 correlation threshold.** The highest is 오징어 at 0.741. Packaging types represent fundamentally different product forms with independent price dynamics. Blending across packaging types is **invalid** for prediction — the series do not co-move.
 
 ### EDA-2.3: Origin Price Spread
+
+![Origin Price Spread](images/eda/eda_2_3_origin_spread.png)
 
 | Species | Median Spread | Verdict |
 |---|---|---|
@@ -192,6 +206,8 @@ Origin is a moderate row-multiplier — most species have 2 origins per day, a f
 
 ### EDA-3.1: Blended vs Dominant-Packaging
 
+![Blended vs Dominant](images/eda/eda_3_1_blended_vs_dominant.png)
+
 | Species | Corr | Lag1 (blend) | Lag1 (dom) | Verdict |
 |---|---|---|---|---|
 | **전복** | **0.9974** | **0.8287** | **0.8281** | **BLEND OK** |
@@ -210,6 +226,8 @@ Origin is a moderate row-multiplier — most species have 2 origins per day, a f
 **Notable:** Many species have low lag-1 autocorrelation even with dominant packaging (병어 0.59, 고등어 0.43). This suggests that daily price data for these species may be inherently noisy, which has implications for prediction model selection.
 
 ### EDA-3.2: Row Reduction Ratio
+
+![Row Reduction](images/eda/eda_3_2_row_reduction.png)
 
 | Strategy | Groups | Median/Day | Compression |
 |---|---|---|---|
@@ -237,6 +255,8 @@ Adding state and packaging reduces compression from 4.3x to 3.0x. Still a signif
 ---
 
 ## Decision Summary
+
+![Decision Summary](images/eda/decision_summary.png)
 
 ### Per-Species Aggregation Strategy (Top 10)
 
