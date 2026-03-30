@@ -1,5 +1,7 @@
 """
-Test all prediction approaches on 감숭어 (mullet) and 참숭어 (grey mullet).
+General-purpose multi-species price prediction test script.
+
+Tests all prediction approaches across configurable species/state/pkg/spec combinations.
 
 Models tested:
   1. Naive (last value)
@@ -8,6 +10,7 @@ Models tested:
   4. v10 LightGBM (VMD + 68 features + 5 preprocessing fixes)
 
 All models use 7-day horizon. v10 includes quantile bands (p10/p50/p90).
+Each config is uniquely identified by a tuple ID: species_state_pkg_spec[_dom].
 
 Usage:
     uv run python scripts/poc_test_mullet.py
@@ -41,16 +44,11 @@ FOREIGN_KW = [
 SASHIMI_SPECIES = ["넙치", "우럭", "방어", "참돔", "농어", "도다리", "감성돔"]
 
 SPECIES_CONFIGS = [
-    {
-        "species": "감숭어", "state": "활", "pkg": "kg", "spec": "중",
-        "domestic": False, "smoothed": False,
-        "label": "감숭어 (mullet)", "method": "vmd",
-    },
-    {
-        "species": "참숭어", "state": "활", "pkg": "kg", "spec": "중",
-        "domestic": False, "smoothed": False,
-        "label": "참숭어 (grey mullet)", "method": "vmd",
-    },
+    # Original sashimi species (for reference comparison)
+    {"id": "감숭어_활_kg_중", "species": "감숭어", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False, "label": "감숭어 (mullet)", "method": "vmd"},
+    {"id": "참숭어_활_kg_중", "species": "참숭어", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False, "label": "참숭어 (grey mullet)", "method": "vmd"},
+    {"id": "쭈꾸미_선_box_중_dom", "species": "쭈꾸미", "state": "선", "pkg": "box", "spec": "중", "domestic": True, "smoothed": False, "label": "쭈꾸미 domestic (webfoot octopus)", "method": "vmd"},
+    {"id": "민어_선_SP_중", "species": "민어", "state": "선", "pkg": "S/P", "spec": "중", "domestic": False, "smoothed": False, "label": "민어 (croaker)", "method": "vmd"},
 ]
 
 KOREAN_HOLIDAYS = {
@@ -719,6 +717,7 @@ def main():
     conformal_band_results = {}
 
     for cfg in SPECIES_CONFIGS:
+        cfg_id = cfg["id"]
         sp = cfg["species"]
         label = cfg["label"]
         method = cfg["method"]
@@ -833,18 +832,19 @@ def main():
             last_band = last_q90 - last_q10
             last_band_pct = last_band / last_pred * 100 if last_pred > 0 else 0
 
-            quantile_band_results[sp] = {
+            quantile_band_results[cfg_id] = {
                 "q10_mean": round(q10_mean),
                 "q50_mean": round(q50_mean),
                 "q90_mean": round(q90_mean),
                 "band_width_pct": round(band_pct, 1),
             }
-            conformal_band_results[sp] = {
+            conformal_band_results[cfg_id] = {
                 "conformal_q": round(float(conf_q)),
                 "coverage_actual": round(coverage_actual, 1),
                 "band_width_pct": round(conf_pct * 2, 1),
             }
             band_rows.append({
+                "id": cfg_id,
                 "label": label,
                 "species": sp,
                 "point": round(last_pred),
@@ -860,6 +860,7 @@ def main():
             print(f"    Quantile backtest returned None (insufficient data)")
 
         all_results.append({
+            "id": cfg_id,
             "species": sp,
             "label": label,
             "n_days": len(records),
@@ -873,44 +874,44 @@ def main():
         print()
 
     # ── Final Summary Table ───────────────────────────────────────────
-    print("\n" + "=" * 70)
-    print("FINAL COMPARISON SUMMARY — 감숭어 / 참숭어 (7-day horizon)")
-    print("=" * 70)
-    print(f"\n  {'Species':<24} {'Naive':>7} {'SMA-7':>7} {'ARIMA':>7} {'v10 LGBM':>9} {'Improv':>8}")
-    print(f"  {'-' * 62}")
+    print("\n" + "=" * 80)
+    print("FINAL COMPARISON SUMMARY — all configs (7-day horizon)")
+    print("=" * 80)
+    print(f"\n  {'Config ID':<34} {'Naive':>7} {'SMA-7':>7} {'ARIMA':>7} {'v10 LGBM':>9} {'Improv':>8}")
+    print(f"  {'-' * 74}")
     for r in all_results:
         naive_m = r["naive"]["mape"]
         sma_m   = r["sma7"]["mape"]
         arima_m = r["arima"]["mape"]
         v10_m   = r["v10"]["mape"] if r["v10"] else 999.0
         improv  = f"{(naive_m - v10_m) / naive_m * 100:+.0f}%" if naive_m > 0 else "—"
-        print(f"  {r['label']:<24} {naive_m:>6.1f}% {sma_m:>6.1f}% {arima_m:>6.1f}% "
+        print(f"  {r['id']:<34} {naive_m:>6.1f}% {sma_m:>6.1f}% {arima_m:>6.1f}% "
               f"{v10_m:>8.1f}% {improv:>8}")
 
     # ── Band Summary Table ────────────────────────────────────────────
     if band_rows:
-        print("\n" + "=" * 70)
+        print("\n" + "=" * 80)
         print("PRICE BAND PREDICTIONS (quantile + conformal)")
-        print("=" * 70)
-        hdr = (f"  {'Species':<24} {'Point':>8} {'Q10':>8} {'Q90':>8} "
+        print("=" * 80)
+        hdr = (f"  {'Config ID':<34} {'Point':>8} {'Q10':>8} {'Q90':>8} "
                f"{'BandW%':>7} {'Conf±':>8} {'Cov%':>6}")
         print(hdr)
-        print(f"  {'-' * 66}")
+        print(f"  {'-' * 76}")
         for row in band_rows:
-            print(f"  {row['label']:<24} {row['point']:>8,} {row['q10']:>8,} {row['q90']:>8,} "
+            print(f"  {row['id']:<34} {row['point']:>8,} {row['q10']:>8,} {row['q90']:>8,} "
                   f"{row['band_pct']:>6.0f}% {row['conf_q']:>8,} {row['coverage']:>5.1f}%")
 
     # ── MCP-style Output ──────────────────────────────────────────────
     if band_rows:
-        print("\n" + "=" * 70)
+        print("\n" + "=" * 80)
         print("MCP SERVER OUTPUT (consumer-friendly)")
-        print("=" * 70)
+        print("=" * 80)
         for row in band_rows:
             point = row["point"]
             conf_q = row["conf_q"]
             likely_lo = max(0, point - conf_q)
             likely_hi = point + conf_q
-            print(f"\n{row['label']} 7-day forecast:")
+            print(f"\n[{row['id']}] {row['label']} 7-day forecast:")
             print(f"  Expected:      {point:,} KRW/kg")
             print(f"  Likely range:  {likely_lo:,} ~ {likely_hi:,} KRW/kg (80% confidence)")
             print(f"  Budget range:  {row['q10']:,} ~ {row['q90']:,} KRW/kg (p10 ~ p90)")
@@ -919,8 +920,8 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out = {
         "generated_at": datetime.now().isoformat(),
-        "version": "mullet_test",
-        "species_tested": ["감숭어", "참숭어"],
+        "version": "multi_species_v1",
+        "configs_tested": [cfg["id"] for cfg in SPECIES_CONFIGS],
         "horizon_days": 7,
         "preprocessing_fixes": [
             "winsorized_mean",
@@ -930,7 +931,7 @@ def main():
             "adaptive_vmd_k",
         ],
         "total_features": 68,
-        "results": all_results,
+        "results": {r["id"]: r for r in all_results},
         "quantile_bands": quantile_band_results,
         "conformal_bands": conformal_band_results,
     }
