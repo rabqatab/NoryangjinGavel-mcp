@@ -30,6 +30,7 @@ Usage (from host):
 """
 import json
 import math
+import os
 import time
 import warnings
 from collections import defaultdict
@@ -1640,8 +1641,18 @@ def main():
     if not tft_results:
         print("  (no TFT results available)")
 
+    # Support config slicing for multi-node parallel training
+    # Set CONFIG_SLICE="0:10" to process only configs 0-9
+    config_slice = os.environ.get("CONFIG_SLICE", None)
+    if config_slice:
+        start, end = map(int, config_slice.split(":"))
+        configs_to_run = SPECIES_CONFIGS[start:end]
+        print(f"\n--- CONFIG_SLICE={config_slice}: processing {len(configs_to_run)}/{len(SPECIES_CONFIGS)} configs ---")
+    else:
+        configs_to_run = SPECIES_CONFIGS
+
     # Process each species config
-    for cfg in SPECIES_CONFIGS:
+    for cfg in configs_to_run:
         sp = cfg.get("id", cfg["species"])
         species_name = cfg["species"]
         use_smoothed = cfg.get("smoothed", False)
@@ -2003,7 +2014,7 @@ def main():
     quantile_model_names = ["GRU", "Transformer", "CNN-LSTM"]
     quantile_results = {}  # {species: {model: {mape_p50, coverage, band_width_avg, band_pct, conformal_*}}}
 
-    for cfg in SPECIES_CONFIGS:
+    for cfg in configs_to_run:
         sp = cfg.get("id", cfg["species"])
         species_name = cfg["species"]
         if sp not in species_cache:
