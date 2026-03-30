@@ -99,12 +99,12 @@ Key files:
 
 Per-species best model for production deployment:
 
-| Species | Model | MAPE | Environment |
-|---|---|---|---|
-| 넙치 | v10 LightGBM | 11.1% | CPU |
-| 우럭 | TFT | 14.7% | GPU (Docker) |
-| 방어 | TFT | 15.6% | GPU (Docker) |
-| 도다리 | CNN-LSTM+VMD | 16.1% | GPU (Docker) |
-| 농어 | GRU | 16.5% | GPU (Docker) |
-| 감성돔 | v10 LightGBM | 17.1% | CPU |
-| 참돔 | v10 LightGBM | 18.9% | CPU |
+| Species | Model | MAPE | Environment | Band Output |
+|---|---|---|---|---|
+| 넙치 | GRU Quantile | 10.2% | GPU (Docker) | p10/p50/p90 |
+| 감성돔 | GRU Quantile | 12.5% | GPU (Docker) | p10/p50/p90 |
+| 농어 | GRU Quantile | 12.8% | GPU (Docker) | p10/p50/p90 |
+| 우럭 | TFT | 14.7% | GPU (Docker) | TFT quantiles |
+| 도다리 | Transformer Quantile | 15.2% | GPU (Docker) | p10/p50/p90 |
+| 방어 | TFT | 15.6% | GPU (Docker) | TFT quantiles |
+| 참돔 | CNN-LSTM Quantile | 16.3% | GPU (Docker) | p10/p50/p90 |

@@ -56,21 +56,30 @@ Two runs: 12-feature (basic) and 68-feature (same features as LightGBM v6) for f
 
 v10 also adds **price band prediction**: LightGBM quantile regression (p10/p50/p90) + conformal prediction intervals (80% coverage, properly calibrated). See `docs/14_advanced_preprocessing.md` for details.
 
-### Best-of-Breed Results (Final — v10 preprocessing across all models)
+### Best-of-Breed Results (Final — v10 preprocessing + DL quantile regression)
 
-| Species | Best Model | MAPE | Runner-up | Status |
-|---|---|---|---|---|
-| **넙치** (flatfish) | v10 LightGBM | **11.1%** | GRU 13.9% | Production ready |
-| **우럭** (rockfish) | TFT (GPU) | **14.7%** | v10 LightGBM 18.7% | Production ready |
-| **방어** (yellowtail) | TFT (GPU) | **15.6%** | Transformer 42.5% | Production ready |
-| **도다리** (flounder) | CNN-LSTM+VMD (GPU, v10) | **16.1%** | GRU+VMD 16.2% | Production ready |
-| **농어** (sea bass) | GRU (GPU, v10) | **16.5%** | Transformer 17.2% | Production ready |
-| **감성돔** (black porgy) | v10 LightGBM | **17.1%** | GRU 18.2% | Production ready |
-| **참돔** (seabream) | v10 LightGBM | **18.9%** | GRU 19.1% | Production ready |
+| Species | Best Model | MAPE | Band (p10~p90) | Coverage | Status |
+|---|---|---|---|---|---|
+| **넙치** (flatfish) | GRU Quantile (GPU) | **10.2%** | 19% width | 56% | Production ready |
+| **감성돔** (black porgy) | GRU Quantile (GPU) | **12.5%** | 44% width | 67% | Production ready |
+| **농어** (sea bass) | GRU Quantile (GPU) | **12.8%** | 32% width | 61% | Production ready |
+| **우럭** (rockfish) | TFT (GPU) | **14.7%** | — | — | Production ready |
+| **도다리** (flounder) | Transformer Quantile (GPU) | **15.2%** | 59% width | 85% | Production ready |
+| **방어** (yellowtail) | TFT (GPU) | **15.6%** | — | — | Production ready |
+| **참돔** (seabream) | CNN-LSTM Quantile (GPU) | **16.3%** | 53% width | 78% | Production ready |
 
-**All 7 species below 19% MAPE** (방어 at 15.6% via TFT). v10 preprocessing was the single biggest improvement — cutting MAPE by 18-43% across all model types.
+**All 7 species below 17% MAPE.** The DL quantile regression (PinballLoss) improved point prediction on 5/7 species beyond v10 LightGBM — the asymmetric loss acts as a regularizer.
 
-**Price band output:** v10 includes calibrated prediction intervals (quantile regression p10/p90 + conformal bands at 80% coverage). See `docs/14_advanced_preprocessing.md`.
+**Price bands:** DL quantile models produce p10/p50/p90 bands. Coverage ranges from 56% (넙치, tight band) to 85% (도다리). Conformal calibration can be applied on top for guaranteed coverage.
+
+Example consumer output:
+```
+참돔 (seabream) next-day forecast:
+  Low estimate (p10):  20,200 KRW/kg
+  Expected (p50):      24,700 KRW/kg
+  High estimate (p90): 27,400 KRW/kg
+  78% of actual prices fall within this range
+```
 
 ### Full Progression: v1 → TFT
 
