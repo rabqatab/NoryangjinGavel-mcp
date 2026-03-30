@@ -1,41 +1,44 @@
 # PoC Price Prediction Report
 
-> Results from 6 iterations (v1–v6) of price prediction models for 7 sashimi species.
-> Scripts: `scripts/poc_prediction.py` (v1) through `poc_prediction_v6.py` (v6)
+> Results from 8 iterations: v1–v7 (CPU, LightGBM) + TFT (GPU, Temporal Fusion Transformer).
+> CPU scripts: `scripts/poc_prediction.py` (v1) through `poc_prediction_v7.py` (v7)
+> GPU scripts: `scripts/train_tft.py` (Docker on GB10 Blackwell)
 
 ## Executive Summary
 
-Over 6 iterations, MAPE improved significantly for all species. The combination of feature engineering (v2-v4), VMD signal decomposition (v5), and 68-feature expansion with technical indicators (v6) delivered the best results.
+Over 8 model iterations spanning CPU (LightGBM with 68 features, VMD decomposition, Optuna optimization) and GPU (Temporal Fusion Transformer), **5 of 7 species now achieve below 23% MAPE**. The best model varies per species — LightGBM wins for stable species, TFT wins for volatile/complex ones.
 
-### Full Progression: v1 → v6
+### Best-of-Breed Results (Final)
 
-| Species | v1 AR | v2 | v3 | v4 | v5 | **v6** | Total Improvement | Dir% |
-|---|---|---|---|---|---|---|---|---|
-| **넙치** | 16.2% | 15.6% | 15.7% | 15.4% | 15.1% | **14.8%** | **+9%** | 71.6% |
-| **감성돔** | 26.7% | 25.2% | 24.0% | 23.8% | 22.8% | **22.8%** | **+15%** | 71.4% |
-| **우럭** | 20.0% | 24.9% | 24.6% | 24.6% | 23.8% | **24.1%** | -21% | 70.3% |
-| **농어** | 27.7% | 25.6% | 26.0% | 26.0% | 23.9% | **23.6%** | **+15%** | 71.0% |
-| **참돔** | 27.7% | 27.1% | 27.1% | 28.5% | 26.8% | **26.5%** | **+4%** | 73.0% |
-| **도다리** | 44.1% | 47.4% | 28.2% | 26.1% | 26.1% | **26.0%** | **+41%** | 78.6% |
-| **방어** (winter) | 174.4% | 346.2% | 122.0% | 85.5% | 75.5% | **62.6%** | **+64%** | 79.4% |
-
-### Best-of-Breed Summary (v6)
-
-| Species | Best Model | MAPE | Direction | Status |
+| Species | Best Model | MAPE | n_val | Status |
 |---|---|---|---|---|
-| **넙치** | VMD+LightGBM (68 feat) | **14.8%** | 71.6% | Production ready |
-| **감성돔** | VMD+LightGBM (68 feat) | **22.8%** | 71.4% | Production ready |
-| **농어** | VMD+LightGBM (68 feat) | **23.6%** | 71.0% | Usable |
-| **우럭** | ARIMA+LightGBM ensemble | **24.1%** | 70.3% | Usable |
-| **도다리** | VMD+LightGBM (68 feat) | **26.0%** | 78.6% | Usable (seasonal) |
-| **참돔** | VMD+LightGBM (68 feat) | **26.5%** | 73.0% | Usable |
-| **방어** (winter) | VMD+LightGBM (68 feat) | **62.6%** | 79.4% | Directional only |
+| **넙치** (flatfish) | v6 VMD+LightGBM | **14.8%** | 2,840 | Production ready |
+| **우럭** (rockfish) | TFT (GPU) | **14.7%** | 1,589 | Production ready |
+| **방어** (yellowtail) | TFT (GPU) | **15.6%** | 1,351 | Production ready |
+| **참돔** (seabream) | TFT (GPU) | **20.8%** | 1,351 | Usable |
+| **감성돔** (black porgy) | v6 VMD+LightGBM | **22.8%** | 1,510 | Usable |
+| **농어** (sea bass) | v6 VMD+LightGBM | **23.6%** | 2,480 | Usable |
+| **도다리** (flounder) | v7 STL-VMD+LightGBM | **25.1%** | 1,505 | Usable (seasonal) |
+
+### Full Progression: v1 → TFT
+
+| Species | v1 AR | v6 LGBM | v7 STL-VMD | TFT (GPU) | **Best** | Total Gain |
+|---|---|---|---|---|---|---|
+| **넙치** | 16.2% | 14.8% | 15.3% | 18.1% | **14.8%** | +9% |
+| **우럭** | 20.0% | 24.1% | 23.7% | **14.7%** | **14.7%** | **+27%** |
+| **방어** | 174.4% | 62.6% | 80.6% | **15.6%** | **15.6%** | **+91%** |
+| **참돔** | 27.7% | 26.5% | 27.3% | **20.8%** | **20.8%** | **+25%** |
+| **감성돔** | 26.7% | **22.8%** | 23.3% | 23.3% | **22.8%** | +15% |
+| **농어** | 27.7% | **23.6%** | 24.8% | 51.0%* | **23.6%** | +15% |
+| **도다리** | 44.1% | 26.0% | **25.1%** | 27.2% | **25.1%** | +43% |
+
+*농어 TFT result (51%) is an anomaly — gap-filling creates stale prices for this sporadically-traded species. LightGBM with its feature-based approach handles sparse data better.
 
 **Key insights:**
-- Direction accuracy is consistently 70-81% across all species
-- VMD decomposition + technical indicators deliver the best point predictions
-- The 27 new features in v6 account for **31-47% of total feature importance**
-- 방어 improved from 174% to 63% MAPE across 6 iterations (+64%)
+- **No single model wins for all species.** LightGBM is better for stable, frequently-traded species (넙치, 감성돔, 농어). TFT is better for volatile or complex species (우럭, 방어, 참돔).
+- **방어 was the biggest success story:** from 174% (unpredictable) to 15.6% (production-ready) — TFT's temporal attention mechanism learned the seasonal demand pattern that all CPU models missed.
+- **Direction accuracy is 70-81%** across all CPU models — consumers can trust "prices going up/down" guidance.
+- The 68 features in v6 account for **31-47% of total feature importance** — calendar, supply, and technical indicators all contribute.
 
 ---
 
@@ -134,6 +137,43 @@ Each species is queried with specific filters to isolate a clean price signal:
 | Advanced Calendar | 0.3-1.1% | Minimal impact — not worth the complexity |
 
 **Lesson:** Technical indicators (especially EMA and momentum) are the most universally impactful new feature category. Distribution features are situation-specific but critical for volatile species. Advanced calendar features were a miss — fish markets don't have strong day-of-week effects at the weekly prediction horizon.
+
+### v7: STL-VMD Dual Decomposition + Optuna K Optimization (CPU)
+
+**New approach:** STL seasonal decomposition first (period=7), then VMD on residuals. Optuna searches K=3-8, alpha=500-5000.
+
+**Result:** Mixed — marginal gains for 2 species, slight regressions for others:
+- 도다리: 26.0% → **25.1%** (+4%) — K=7, alpha=1500
+- 우럭: 24.1% → **23.7%** (+2%) — K=5, alpha=5000
+- 방어 winter: 62.6% → 80.6% (-29%) — STL fails on small seasonal sample
+
+**Lesson:** STL-VMD is not universally better. The weekly STL period doesn't capture the true seasonality of fish prices (which is monthly/annual, not weekly). Optuna found two K clusters: K=7 for stable species, K=5 for volatile ones.
+
+### TFT: Temporal Fusion Transformer (GPU, Docker on GB10)
+
+**Architecture:** pytorch-forecasting TFT with:
+- Static covariates: species_id
+- Known future: dow, month, woy, is_weekend, days_to_seollal, days_to_chuseok
+- Observed past: price, ema_7, ema_30, rsi_14, price_7d_avg, price_30d_avg, price_std_7d, n_lots, n_origins, quantity, own_qty_7d, other_sashimi_7d, market_lots_7d
+- 118K parameters, 30-day encoder, 7-day prediction horizon, quantile loss
+- Gap-filled continuous daily index (forward-fill non-trading days)
+- Trained on GB10 Blackwell GPU via Docker (nvcr.io/nvidia/pytorch:24.12-py3)
+
+**Result:** TFT wins for 3 species, LightGBM wins for 3, tie for 1:
+
+| Species | v6 LightGBM | TFT (GPU) | Winner |
+|---|---|---|---|
+| **우럭** | 24.1% | **14.7%** | TFT (+39%) |
+| **방어** | 62.6% | **15.6%** | TFT (+75%) |
+| **참돔** | 26.5% | **20.8%** | TFT (+22%) |
+| **넙치** | **14.8%** | 18.1% | LightGBM |
+| **감성돔** | **22.8%** | 23.3% | LightGBM |
+| **도다리** | **25.1%** (v7) | 27.2% | LightGBM |
+| **농어** | **23.6%** | 51.0%* | LightGBM |
+
+*농어 TFT anomaly: gap-filling creates long runs of stale prices (농어 trades ~250 of 365 days but with irregular gaps). The forward-filled values mislead TFT's attention mechanism. LightGBM's feature-based approach doesn't have this problem because features are computed from trading days only.
+
+**Lesson:** TFT excels at capturing complex temporal patterns (방어's seasonal demand, 우럭's non-linear dynamics) but struggles with sparse/irregular data. The best strategy is a per-species model selection: TFT for species with good data coverage, LightGBM for sporadic traders.
 
 ---
 
@@ -289,19 +329,22 @@ Based on literature review of fish price prediction research:
 
 ## Recommended Next Steps
 
-### Completed (v5-v6)
-- ~~Signal decomposition (VMD) before prediction~~ → Done in v5, +2-12% improvement
-- ~~Ensemble approach for 우럭~~ → Done in v5, recovered from v2-v4 regression
-- ~~Technical indicators (EMA, MACD, RSI, Bollinger)~~ → Done in v6, 15-30% of importance
-- ~~Fourier seasonal encoding~~ → Done in v6, 6-9% of importance
-- ~~Price distribution features~~ → Done in v6, critical for 방어 (15%)
+### Completed
+- ~~Signal decomposition (VMD) before prediction~~ → v5, +2-12%
+- ~~Ensemble approach for 우럭~~ → v5, recovered from regression
+- ~~Technical indicators (EMA, MACD, RSI, Bollinger)~~ → v6, 15-30% importance
+- ~~Fourier seasonal encoding~~ → v6, 6-9% importance
+- ~~Price distribution features~~ → v6, critical for 방어 (15%)
+- ~~STL-VMD dual decomposition + Optuna K search~~ → v7, marginal gains for 도다리/우럭
+- ~~TFT (Temporal Fusion Transformer) on GPU~~ → Wins for 우럭 (14.7%), 방어 (15.6%), 참돔 (20.8%)
+- ~~GRU/LSTM evaluation~~ → Not needed; TFT already achieved literature-target MAPE
 
-### Remaining (by expected impact)
-1. **LSTM/GRU deep learning models** (requires Docker for Blackwell GPU) — can learn temporal patterns VMD+LightGBM misses. GRU achieved 10.6% MAPE for tomato price prediction in the Nature 2025 paper.
-2. **Integrate KHOA ocean data** (wave height, SST, wind) — deferred to future, API registration needed. Expected to improve 방어 and 도다리 where supply disruption is the main driver.
-3. **Import/fuel data** for species with foreign supply sensitivity
-4. **Hyperparameter optimization** (Optuna) — systematic search may squeeze 1-3% more from LightGBM
-5. **Remove low-impact features** — advanced calendar features (0.3-1.1%) add noise, consider pruning
+### Remaining (for production)
+1. **Per-species model routing** — deploy LightGBM for 넙치/감성돔/농어/도다리, TFT for 우럭/방어/참돔. This is the immediate next step for the MCP server.
+2. **Integrate KHOA ocean data** (wave height, SST, wind) — deferred, API registration needed. Expected to further improve 방어 and 도다리.
+3. **Fix 농어 TFT** — investigate gap-filling strategy for sporadic species; consider interpolation instead of forward-fill.
+4. **Import/fuel data** for species with foreign supply sensitivity.
+5. **Prune low-impact features** — advanced calendar (0.3-1.1%) adds noise without value.
 
 Sources:
 - [Price Forecasting of Marine Fish — PMC (2024)](https://pmc.ncbi.nlm.nih.gov/articles/PMC11048843/)
