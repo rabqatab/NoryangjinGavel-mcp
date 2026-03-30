@@ -64,6 +64,42 @@ Use different VMD K values based on the current price regime:
 | **Winsorized Mean (30d)** | **0.858** | **9.2%** | **+14% / -28% noise** |
 | Qty-Weighted Mean | 0.883 | 7.8% | +18% / -39% noise |
 
+## Results: v6 → v10 (18-29% MAPE Reduction)
+
+| Species | v6 (before) | v10 (after) | Improvement |
+|---|---|---|---|
+| **넙치** | 14.8% | **11.1%** | **+25%** |
+| **감성돔** | 22.8% | **17.1%** | **+25%** |
+| **참돔** | 26.5% | **18.9%** | **+29%** |
+| **우럭** | 24.1% | **18.7%** | **+23%** |
+| **농어** | 23.6% | **19.3%** | **+18%** |
+| **도다리** | 26.0% | **21.1%** | **+19%** |
+| **방어** | 62.6% | **49.2%** | **+21%** |
+
+This is the single biggest improvement in the entire project — more impactful than any model architecture change (v1-v9) or DL model (TFT, Transformer, etc.).
+
+## Price Band Prediction (Quantile + Conformal)
+
+Beyond point predictions, v10 outputs calibrated price bands:
+
+| Species | Point | Likely Range (p10~p90) | Conformal (80%) | Band Width |
+|---|---|---|---|---|
+| 넙치 | 20,950 | 19,026 ~ 21,817 | ±2,897 | 13% |
+| 참돔 | 20,635 | 17,570 ~ 22,377 | ±4,430 | 23% |
+| 감성돔 | 33,285 | 26,611 ~ 35,701 | ±7,103 | 27% |
+| 도다리 | 14,860 | 12,570 ~ 16,596 | ±4,111 | 27% |
+| 농어 | 17,455 | 15,078 ~ 20,359 | ±4,493 | 30% |
+| 방어 | 3,479 | 2,981 ~ 5,561 | ±2,061 | 74% |
+
+All conformal bands achieve exactly **80% actual coverage** — properly calibrated. Consumer output example:
+
+```
+넙치 (flatfish) 7-day forecast:
+  Expected: 20,950 KRW/kg
+  Likely range: 19,000 ~ 21,800 KRW/kg (80% confidence)
+  Budget range: 19,000 ~ 21,800 KRW/kg (p10~p90)
+```
+
 ## Implementation
 
-All 5 fixes are implemented in `scripts/poc_prediction_v10.py` and applied consistently across both CPU (LightGBM) and GPU (DL models) training pipelines.
+All 5 fixes + quantile bands are implemented in `scripts/poc_prediction_v10.py` and will be applied consistently across both CPU (LightGBM) and GPU (DL models) training pipelines.

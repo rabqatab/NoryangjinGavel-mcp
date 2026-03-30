@@ -38,6 +38,24 @@ Two runs: 12-feature (basic) and 68-feature (same features as LightGBM v6) for f
 - **CNN-LSTM is best for 감성돔** (21.6%) — the 1D convolution captures local patterns in the rich feature set
 - **방어 remains the litmus test:** only TFT solves it. All other DL models produce 150-197% MAPE.
 
+### v10: Advanced Preprocessing (5 Fixes) — Biggest Single Improvement
+
+**5 fixes:** Winsorized mean (30d window), log-transform target, outlier day removal (3σ), origin-weighted aggregation, adaptive VMD K.
+
+| Species | Before (v6) | After (v10) | Improvement |
+|---|---|---|---|
+| 넙치 | 14.8% | **11.1%** | **+25%** |
+| 감성돔 | 22.8% | **17.1%** | **+25%** |
+| 참돔 | 26.5% | **18.9%** | **+29%** |
+| 우럭 | 24.1% | **18.7%** | **+23%** |
+| 농어 | 23.6% | **19.3%** | **+18%** |
+| 도다리 | 26.0% | **21.1%** | **+19%** |
+| 방어 | 62.6% | **49.2%** | **+21%** |
+
+**This is the single biggest improvement in the entire project.** Preprocessing quality matters more than model architecture — confirmed empirically.
+
+v10 also adds **price band prediction**: LightGBM quantile regression (p10/p50/p90) + conformal prediction intervals (80% coverage, properly calibrated). See `docs/14_advanced_preprocessing.md` for details.
+
 ### Best-of-Breed Results (Final — CPU + 7 DL models, 68 features, same VMD preprocessing)
 
 | Species | Best Model | MAPE | Runner-up | Status |
