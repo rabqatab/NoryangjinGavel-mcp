@@ -53,6 +53,13 @@ SPECIES_CONFIGS = [
     {"id": "바위굴_활_box_대", "species": "바위굴", "state": "활", "pkg": "box", "spec": "대", "domestic": False, "smoothed": False, "label": "바위굴 (rock oyster)", "method": "vmd"},
     {"id": "수꽃게_활_kg_중", "species": "수꽃게", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False, "label": "수꽃게 (male blue crab)", "method": "vmd"},
     {"id": "암꽃게_활_kg_중", "species": "암꽃게", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False, "label": "암꽃게 (female blue crab)", "method": "vmd"},
+    # Premium sashimi: 활어 大/특대/1미 (large/premium grades)
+    {"id": "수꽃게_활_kg_대", "species": "수꽃게", "state": "활", "pkg": "kg", "spec": "대", "domestic": False, "smoothed": False, "label": "수꽃게 大 (large male crab)", "method": "vmd"},
+    {"id": "암꽃게_활_kg_대", "species": "암꽃게", "state": "활", "pkg": "kg", "spec": "대", "domestic": False, "smoothed": False, "label": "암꽃게 大 (large female crab)", "method": "vmd"},
+    {"id": "넙치_활_kg_2미", "species": "넙치", "state": "활", "pkg": "kg", "spec": "2미", "domestic": False, "smoothed": False, "label": "넙치 2미 (large flatfish)", "method": "vmd"},
+    {"id": "참돔_활_kg_2미", "species": "참돔", "state": "활", "pkg": "kg", "spec": "2미", "domestic": True, "smoothed": False, "label": "참돔 2미 (large seabream)", "method": "vmd"},
+    {"id": "농어_활_kg_1미", "species": "농어", "state": "활", "pkg": "kg", "spec": "1미", "domestic": True, "smoothed": False, "label": "농어 1미 (whole sea bass)", "method": "vmd"},
+    {"id": "방어_활_kg_1미", "species": "방어", "state": "활", "pkg": "kg", "spec": "1미", "domestic": True, "smoothed": True, "label": "방어 1미 (whole yellowtail)", "method": "vmd"},
 ]
 
 KOREAN_HOLIDAYS = {
