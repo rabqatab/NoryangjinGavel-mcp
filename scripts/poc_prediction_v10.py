@@ -643,6 +643,121 @@ def backtest_v10(X, y, fnames, prices_raw, species, horizon, method="vmd",
     return result, imp
 
 
+# ── Conformal Prediction ─────────────────────────────────────────────
+
+def compute_conformal_bands(actuals, predictions, coverage=0.80):
+    """Calibrate prediction bands from residuals to guarantee coverage."""
+    residuals = actuals - predictions
+    abs_residuals = np.abs(residuals)
+    q = np.percentile(abs_residuals, coverage * 100)
+    return q
+
+
+def train_quantile_lgbm(X_tr, y_tr, X_te, alpha):
+    """Train a LightGBM quantile regression model and return predictions."""
+    base_params = {
+        "objective": "quantile",
+        "alpha": alpha,
+        "metric": "quantile",
+        "learning_rate": 0.03,
+        "num_leaves": 31,
+        "min_child_samples": 20,
+        "feature_fraction": 0.7,
+        "bagging_fraction": 0.7,
+        "bagging_freq": 5,
+        "reg_alpha": 0.1,
+        "reg_lambda": 0.1,
+        "verbose": -1,
+        "n_jobs": 1,
+    }
+    model = lgb.train(base_params, lgb.Dataset(X_tr, y_tr), num_boost_round=1000)
+    return model.predict(X_te)
+
+
+def backtest_quantile(X, y, prices_raw, method="vmd", n_splits=5, outlier_flags=None):
+    """
+    Run same time-series backtest folds as backtest_v10 but for quantile regression.
+    Returns arrays of (actuals_raw, preds_raw, q10_raw, q90_raw) across all folds.
+    For VMD species: quantile models are trained on the summed (reconstructed) log target.
+    For ensemble (우럭): skip quantile regression, return None.
+    For conformal bands: collect point prediction residuals (in raw price space).
+    """
+    if method == "ensemble":
+        return None
+
+    n = len(X)
+    min_train = int(n * 0.5)
+    step = (n - min_train) // n_splits
+    if step < 10 or min_train < 100:
+        return None
+
+    if outlier_flags is None:
+        outlier_flags = [False] * n
+
+    all_actuals_raw = []
+    all_preds_raw = []
+    all_q10_raw = []
+    all_q90_raw = []
+
+    for s in range(n_splits):
+        te = min_train + s * step
+        te_end = min(te + step, n)
+        if te_end <= te:
+            continue
+
+        train_mask = np.array([not outlier_flags[i] for i in range(te)])
+        X_tr = X[:te][train_mask]
+        y_tr = y[:te][train_mask]
+        X_te = X[te:te_end]
+        y_te = y[te:te_end]
+
+        if len(X_tr) < 50:
+            X_tr, y_tr = X[:te], y[:te]
+
+        # Point prediction (median, same as main model but using reconstructed sum for VMD)
+        if method == "vmd":
+            K = adaptive_vmd_k(prices_raw[:te])
+            try:
+                modes = decompose_vmd(y_tr, K=K)
+            except Exception:
+                modes = [y_tr]
+            # Reconstruct point prediction by summing per-mode LightGBM predictions
+            combined_point = np.zeros(te_end - te)
+            n_tr = len(X_tr)
+            for mode in modes:
+                m_arr = np.array(mode)
+                if len(m_arr) != n_tr:
+                    if len(m_arr) > n_tr:
+                        m_arr = m_arr[:n_tr]
+                    else:
+                        m_arr = np.pad(m_arr, (0, n_tr - len(m_arr)), mode="edge")
+                pred_mode, _ = train_lgbm(X_tr, m_arr, X_te)
+                combined_point += pred_mode
+            # For quantile bands: train on the FULL reconstructed log-target (y_tr)
+            pred_q10_log = train_quantile_lgbm(X_tr, y_tr, X_te, alpha=0.1)
+            pred_q90_log = train_quantile_lgbm(X_tr, y_tr, X_te, alpha=0.9)
+        else:
+            # plain LightGBM (non-vmd, non-ensemble)
+            combined_point, _ = train_lgbm(X_tr, y_tr, X_te)
+            pred_q10_log = train_quantile_lgbm(X_tr, y_tr, X_te, alpha=0.1)
+            pred_q90_log = train_quantile_lgbm(X_tr, y_tr, X_te, alpha=0.9)
+
+        all_actuals_raw.extend(np.exp(y_te))
+        all_preds_raw.extend(np.exp(combined_point))
+        all_q10_raw.extend(np.exp(pred_q10_log))
+        all_q90_raw.extend(np.exp(pred_q90_log))
+
+    if not all_actuals_raw:
+        return None
+
+    return {
+        "actuals": np.array(all_actuals_raw),
+        "preds":   np.array(all_preds_raw),
+        "q10":     np.array(all_q10_raw),
+        "q90":     np.array(all_q90_raw),
+    }
+
+
 # ── Main ────────────────────────────────────────────────────────────
 
 def main():
@@ -768,6 +883,221 @@ def main():
     print("  Fix 4: Origin-Weighted Aggregation — lots weighted by origin frequency")
     print("  Fix 5: Adaptive VMD K — K=5 (high vol) or K=3 (low vol)")
 
+    # ── Quantile Regression + Conformal Prediction ─────────────────────
+    print("\n" + "=" * 70)
+    print("PRICE BAND PREDICTIONS (Quantile + Conformal)")
+    print("=" * 70)
+
+    quantile_band_results = {}
+    conformal_band_results = {}
+
+    # Store per-species band data for table printing
+    band_rows = []
+
+    for cfg in SPECIES_CONFIGS:
+        sp = cfg["species"]
+        method = cfg.get("method", "vmd")
+        if cfg.get("regime_split"):
+            # Use winter regime records for 방어
+            records = extract_records_v10(data, n, cfg)
+            recs = [r for r in records if parse_date(r["date"]).month in {11,12,1,2}]
+            om_full = flag_outlier_days(records)
+            om = np.array([om_full[i] for i, r in enumerate(records)
+                           if parse_date(r["date"]).month in {11,12,1,2}])
+            if len(recs) < 100:
+                continue
+            rp = np.array([r["price"] for r in recs])
+            X, y_arr, fnames, dates, ol_flags = build_features_v10(
+                recs, ctx, sp, 7, cfg.get("smoothed", False), outlier_mask=om)
+            label = f"{sp} (winter)"
+        else:
+            records = extract_records_v10(data, n, cfg)
+            if len(records) < 200:
+                continue
+            rp = np.array([r["price"] for r in records])
+            om = flag_outlier_days(records)
+            X, y_arr, fnames, dates, ol_flags = build_features_v10(
+                records, ctx, sp, 7, cfg.get("smoothed", False), outlier_mask=om)
+            label = sp
+
+        if len(X) < 200:
+            continue
+
+        print(f"\n  {label}  [method={method}]")
+
+        # --- Conformal bands (all species, using point predictions from backtest) ---
+        # Find matching backtest result to get point prediction info
+        sp_key = f"{sp}_winter" if cfg.get("regime_split") else sp
+        v10r = next((r for r in all_results if r["species"] == sp_key), None)
+
+        if method == "ensemble":
+            # For ensemble (우럭): run a lightweight backtest to get actuals+preds for conformal
+            n_pts = len(X)
+            min_tr = int(n_pts * 0.5)
+            step_sz = (n_pts - min_tr) // 5
+            conf_actuals, conf_preds = [], []
+            if step_sz >= 10 and min_tr >= 100:
+                for s in range(5):
+                    te = min_tr + s * step_sz
+                    te_end = min(te + step_sz, n_pts)
+                    if te_end <= te:
+                        continue
+                    train_mask = np.array([not ol_flags[i] for i in range(te)])
+                    X_tr = X[:te][train_mask]
+                    y_tr = y_arr[:te][train_mask]
+                    X_te = X[te:te_end]
+                    y_te = y_arr[te:te_end]
+                    if len(X_tr) < 50:
+                        X_tr, y_tr = X[:te], y_arr[:te]
+                    lgbm_pred, _ = train_lgbm(X_tr, y_tr, X_te)
+                    from statsmodels.tsa.arima.model import ARIMA
+                    log_raw = np.log(np.maximum(rp, 1.0))
+                    arima_preds_fold = []
+                    for t in range(te, te_end):
+                        try:
+                            m = ARIMA(log_raw[max(0, t-365):t], order=(2, 1, 2)).fit()
+                            arima_preds_fold.append(m.forecast(steps=7)[-1])
+                        except Exception:
+                            arima_preds_fold.append(log_raw[t-1] if t > 0 else log_raw[0])
+                    combined = 0.6 * lgbm_pred + 0.4 * np.array(arima_preds_fold)
+                    conf_actuals.extend(np.exp(y_te))
+                    conf_preds.extend(np.exp(combined))
+
+            if conf_actuals:
+                conf_actuals_arr = np.array(conf_actuals)
+                conf_preds_arr = np.array(conf_preds)
+                conf_q = compute_conformal_bands(conf_actuals_arr, conf_preds_arr, coverage=0.80)
+                lower_conf = conf_preds_arr - conf_q
+                upper_conf = conf_preds_arr + conf_q
+                coverage_actual = float(np.mean(
+                    (conf_actuals_arr >= lower_conf) & (conf_actuals_arr <= upper_conf)
+                )) * 100
+                last_pred = conf_preds_arr[-1]
+                conf_pct = conf_q / last_pred * 100 if last_pred > 0 else 0
+
+                conformal_band_results[sp_key] = {
+                    "conformal_q": round(float(conf_q)),
+                    "coverage_actual": round(coverage_actual, 1),
+                    "band_width_pct": round(conf_pct * 2, 1),
+                    "note": "ensemble — quantile regression skipped",
+                }
+                print(f"    Conformal(80%): ±{conf_q:,.0f}  actual_coverage={coverage_actual:.1f}%")
+                band_rows.append({
+                    "label": label,
+                    "point": round(last_pred),
+                    "q10": None,
+                    "q90": None,
+                    "band_width": None,
+                    "band_pct": None,
+                    "conf_q": round(float(conf_q)),
+                    "coverage": round(coverage_actual, 1),
+                    "method": "ensemble",
+                })
+            continue
+
+        # --- Quantile regression backtest (VMD / plain LightGBM) ---
+        qb = backtest_quantile(X, y_arr, rp, method=method, n_splits=5, outlier_flags=ol_flags)
+        if qb is None:
+            print(f"    SKIP — quantile backtest returned None")
+            continue
+
+        actuals_arr = qb["actuals"]
+        preds_arr   = qb["preds"]
+        q10_arr     = qb["q10"]
+        q90_arr     = qb["q90"]
+
+        # Conformal from point prediction residuals
+        conf_q = compute_conformal_bands(actuals_arr, preds_arr, coverage=0.80)
+
+        # Actual conformal coverage
+        lower_conf = preds_arr - conf_q
+        upper_conf = preds_arr + conf_q
+        coverage_actual = float(np.mean(
+            (actuals_arr >= lower_conf) & (actuals_arr <= upper_conf)
+        )) * 100
+
+        # Summary stats
+        q10_mean = float(np.mean(q10_arr))
+        q50_mean = float(np.mean(preds_arr))
+        q90_mean = float(np.mean(q90_arr))
+        band_width_mean = q90_mean - q10_mean
+        band_pct = band_width_mean / q50_mean * 100 if q50_mean > 0 else 0
+        conf_pct = conf_q / q50_mean * 100 if q50_mean > 0 else 0
+
+        quantile_band_results[sp_key] = {
+            "q10_mean": round(q10_mean),
+            "q50_mean": round(q50_mean),
+            "q90_mean": round(q90_mean),
+            "band_width_pct": round(band_pct, 1),
+        }
+        conformal_band_results[sp_key] = {
+            "conformal_q": round(float(conf_q)),
+            "coverage_actual": round(coverage_actual, 1),
+            "band_width_pct": round(conf_pct * 2, 1),
+        }
+
+        # Use last test point as representative "forecast"
+        last_pred = preds_arr[-1]
+        last_q10 = q10_arr[-1]
+        last_q90 = q90_arr[-1]
+        last_band = last_q90 - last_q10
+        last_band_pct = last_band / last_pred * 100 if last_pred > 0 else 0
+
+        print(f"    Q10={q10_mean:,.0f}  Q50={q50_mean:,.0f}  Q90={q90_mean:,.0f}  "
+              f"band={band_pct:.1f}%  conformal=±{conf_q:,.0f}  cov={coverage_actual:.1f}%")
+
+        band_rows.append({
+            "label": label,
+            "point": round(last_pred),
+            "q10": round(last_q10),
+            "q90": round(last_q90),
+            "band_width": round(last_band),
+            "band_pct": round(last_band_pct, 1),
+            "conf_q": round(float(conf_q)),
+            "coverage": round(coverage_actual, 1),
+            "method": method,
+        })
+
+    # ── Print band table ─────────────────────────────────────────────
+    print("\n" + "=" * 70)
+    print("=== PRICE BAND PREDICTIONS ===")
+    print("=" * 70)
+    hdr = f"  {'Species':<16} {'Point':>8} {'Q10':>8} {'Q90':>8} {'BandW':>9} {'Conformal(80%)':>15} {'Coverage':>9}"
+    print(hdr)
+    print(f"  {'-'*68}")
+    for row in band_rows:
+        if row["q10"] is not None:
+            band_str = f"{row['band_width']:,} ({row['band_pct']:.0f}%)"
+        else:
+            band_str = "n/a (ensemble)"
+        q10_str = f"{row['q10']:,}" if row["q10"] is not None else "—"
+        q90_str = f"{row['q90']:,}" if row["q90"] is not None else "—"
+        conf_str = f"±{row['conf_q']:,}"
+        print(f"  {row['label']:<16} {row['point']:>8,} {q10_str:>8} {q90_str:>8} "
+              f"{band_str:>16} {conf_str:>12} {row['coverage']:>8.1f}%")
+
+    # ── Consumer-friendly MCP-style output ──────────────────────────
+    print("\n" + "=" * 70)
+    print("EXAMPLE MCP SERVER OUTPUT (consumer-friendly)")
+    print("=" * 70)
+    for row in band_rows:
+        sp_label = row["label"]
+        point = row["point"]
+        conf_q = row["conf_q"]
+        likely_lo = max(0, point - conf_q)
+        likely_hi = point + conf_q
+        if row["q10"] is not None:
+            budget_lo = row["q10"]
+            budget_hi = row["q90"]
+            budget_line = f"  Budget range: {budget_lo:,} ~ {budget_hi:,} KRW/kg (p10~p90)"
+        else:
+            budget_line = f"  (Quantile range not available for ensemble method)"
+        print(f"\n{sp_label} 7-day forecast:")
+        print(f"  Expected: {point:,} KRW/kg")
+        print(f"  Likely range: {likely_lo:,} ~ {likely_hi:,} KRW/kg (80% confidence)")
+        print(budget_line)
+
+    # ── Save results ─────────────────────────────────────────────────
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out = {
         "generated_at": datetime.now().isoformat(),
@@ -784,6 +1114,8 @@ def main():
         "results": all_results,
         "feature_importance": {k: dict(list(v.items())[:20]) for k, v in all_importance.items()},
         "summary": summary,
+        "quantile_bands": quantile_band_results,
+        "conformal_bands": conformal_band_results,
     }
     out_path = OUTPUT_DIR / "poc_v10_results.json"
     with open(out_path, "w", encoding="utf-8") as f:
