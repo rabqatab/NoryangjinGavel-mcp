@@ -68,13 +68,13 @@ FOREIGN_KW = [
 SASHIMI_SPECIES = ["넙치", "우럭", "방어", "참돔", "농어", "도다리", "감성돔"]
 
 SPECIES_CONFIGS = [
-    {"species": "넙치", "state": "활", "pkg": "kg", "spec": "중", "domestic": False},
-    {"species": "우럭", "state": "활", "pkg": "kg", "spec": "중", "domestic": False},
-    {"species": "방어", "state": "선", "pkg": "kg", "spec": "중", "domestic": True},
-    {"species": "참돔", "state": "활", "pkg": "kg", "spec": "중", "domestic": True},
-    {"species": "농어", "state": "활", "pkg": "kg", "spec": "중", "domestic": True},
-    {"species": "도다리", "state": "활", "pkg": "kg", "spec": "중", "domestic": False},
-    {"species": "감성돔", "state": "활", "pkg": "kg", "spec": "중", "domestic": True},
+    {"species": "넙치", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False},
+    {"species": "우럭", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": False},
+    {"species": "방어", "state": "선", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": True, "regime_split": True},
+    {"species": "참돔", "state": "활", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": False},
+    {"species": "농어", "state": "활", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": False},
+    {"species": "도다리", "state": "활", "pkg": "kg", "spec": "중", "domestic": False, "smoothed": True},
+    {"species": "감성돔", "state": "활", "pkg": "kg", "spec": "중", "domestic": True, "smoothed": False},
 ]
 
 KOREAN_HOLIDAYS = {
@@ -158,6 +158,19 @@ def rsi(prices, period=14):
             rs = avg_gain / avg_loss
             out[i + 1] = 100 - (100 / (1 + rs))
     return out
+
+
+# ── VMD Decomposition ─────────────────────────────────────────────
+
+
+def decompose_vmd(series, K=3, alpha=2000):
+    """Decompose a 1D series into K modes via Variational Mode Decomposition."""
+    try:
+        from vmdpy import VMD
+        u, _, _ = VMD(series, alpha, 0, K, 0, 1, 1e-7)
+        return [u[k] for k in range(K)]
+    except Exception:
+        return [series]
 
 
 # ── Data Preparation ──────────────────────────────────────────────
@@ -899,10 +912,242 @@ def load_tft_results() -> dict:
 # ── Main Pipeline ─────────────────────────────────────────────────
 
 
+def train_and_evaluate_on_split(
+    train_norm, test_norm, train_targets_norm, test_targets_norm,
+    price_mean, price_std, n_features, trainable_models, device,
+    label_prefix="", use_vmd=False,
+):
+    """
+    Train all DL models on a single train/test split and return metrics.
+    If use_vmd=True, decompose targets into K=3 VMD modes, train per-mode models,
+    and recombine predictions by summation.
+    Returns (results_dict, timing_dict) where keys are model names.
+    """
+    results = {}
+    timings = {}
+
+    # Build datasets for the raw (non-VMD) path
+    train_ds = SlidingWindowDataset(train_norm, train_targets_norm)
+    test_ds = SlidingWindowDataset(test_norm, test_targets_norm)
+
+    if len(train_ds) < 50 or len(test_ds) < 10:
+        print(f"    SKIP: insufficient samples (train={len(train_ds)}, test={len(test_ds)})")
+        return results, timings
+
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+
+    # Validation split from training data
+    val_split = int(len(train_ds) * 0.9)
+    train_subset = torch.utils.data.Subset(train_ds, range(val_split))
+    val_subset = torch.utils.data.Subset(train_ds, range(val_split, len(train_ds)))
+    train_sub_loader = DataLoader(train_subset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    val_sub_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+
+    print(f"    Samples: train={len(train_ds)}, test={len(test_ds)}")
+
+    if not use_vmd:
+        # Standard training (no VMD)
+        for model_name in trainable_models:
+            full_name = f"{label_prefix}{model_name}" if label_prefix else model_name
+            print(f"\n    [{full_name}]", end=" ", flush=True)
+            t0 = time.time()
+            try:
+                model = create_model(model_name, n_features)
+                n_params = count_parameters(model)
+                print(f"({n_params:,} params)", end=" ", flush=True)
+
+                train_info = train_model(
+                    model, train_sub_loader, val_sub_loader,
+                    epochs=EPOCHS, lr=LR, device=device, patience=PATIENCE,
+                )
+                print(f"ep={train_info['best_epoch']}", end=" ", flush=True)
+
+                metrics = run_test(model, test_loader, device, price_mean, price_std)
+                elapsed = time.time() - t0
+
+                results[full_name] = metrics
+                timings[full_name] = round(elapsed, 1)
+
+                print(f"MAPE={metrics['mape']:.1f}% RMSE={metrics['rmse']:.0f} "
+                      f"Dir={metrics['dir_acc']:.1f}% [{elapsed:.1f}s]")
+            except Exception as e:
+                elapsed = time.time() - t0
+                print(f"FAILED: {e} [{elapsed:.1f}s]")
+                results[full_name] = {
+                    "mape": 999.0, "rmse": 999.0, "dir_acc": 0.0,
+                    "n_samples": 0, "error": str(e),
+                }
+                timings[full_name] = round(elapsed, 1)
+
+            if device == "cuda":
+                torch.cuda.empty_cache()
+    else:
+        # VMD decomposition training
+        VMD_K = 3
+        # Decompose the training targets (1D series of all training target values)
+        # We decompose the flat training target series, then build per-mode sliding windows.
+        # The test targets remain as-is for evaluation; we sum per-mode predictions.
+        train_target_flat = train_targets_norm.copy()
+        modes = decompose_vmd(train_target_flat, K=VMD_K)
+
+        for model_name in trainable_models:
+            full_name = f"{label_prefix}{model_name}+VMD"
+            print(f"\n    [{full_name}]", end=" ", flush=True)
+            t0 = time.time()
+
+            try:
+                mode_models = []
+                for k, mode_series in enumerate(modes):
+                    # Create dataset for this VMD mode
+                    mode_ds = SlidingWindowDataset(train_norm, mode_series)
+                    if len(mode_ds) < 50:
+                        print(f"mode{k}:skip", end=" ", flush=True)
+                        continue
+                    mode_val_split = int(len(mode_ds) * 0.9)
+                    mode_train_sub = torch.utils.data.Subset(mode_ds, range(mode_val_split))
+                    mode_val_sub = torch.utils.data.Subset(mode_ds, range(mode_val_split, len(mode_ds)))
+                    mode_train_loader = DataLoader(mode_train_sub, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+                    mode_val_loader = DataLoader(mode_val_sub, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+
+                    mode_model = create_model(model_name, n_features)
+                    train_model(
+                        mode_model, mode_train_loader, mode_val_loader,
+                        epochs=EPOCHS, lr=LR, device=device, patience=PATIENCE,
+                    )
+                    mode_models.append(mode_model)
+                    print(f"m{k}", end=" ", flush=True)
+
+                if not mode_models:
+                    raise ValueError("All VMD modes skipped")
+
+                # Test: predict each mode and sum
+                model_test = mode_models[0]
+                model_test.train(False)
+                all_preds = []
+                all_actuals = []
+
+                with torch.no_grad():
+                    for x, y in test_loader:
+                        x_dev = x.to(device)
+                        combined_pred = torch.zeros(x.size(0), HORIZON).to(device)
+                        for mm in mode_models:
+                            mm.train(False)
+                            combined_pred += mm(x_dev)
+                        all_preds.append(combined_pred.cpu().numpy())
+                        all_actuals.append(y.numpy())
+
+                preds = np.concatenate(all_preds, axis=0)
+                actuals = np.concatenate(all_actuals, axis=0)
+
+                # Denormalize
+                preds_denorm = preds * price_std + price_mean
+                actuals_denorm = actuals * price_std + price_mean
+
+                # MAPE
+                valid = actuals_denorm > 0
+                if valid.any():
+                    mape = float(np.mean(
+                        np.abs(preds_denorm[valid] - actuals_denorm[valid]) / actuals_denorm[valid]
+                    )) * 100
+                else:
+                    mape = 999.0
+
+                # RMSE
+                rmse = float(np.sqrt(np.mean((preds_denorm - actuals_denorm) ** 2)))
+
+                # Direction accuracy
+                if preds_denorm.shape[0] > 1:
+                    pred_first = preds_denorm[:, 0]
+                    actual_first = actuals_denorm[:, 0]
+                    pred_dir = pred_first[1:] > pred_first[:-1]
+                    actual_dir = actual_first[1:] > actual_first[:-1]
+                    dir_acc = float(np.mean(pred_dir == actual_dir)) * 100
+                else:
+                    dir_acc = 50.0
+
+                metrics = {
+                    "mape": round(mape, 2),
+                    "rmse": round(rmse, 0),
+                    "dir_acc": round(dir_acc, 1),
+                    "n_samples": len(preds),
+                }
+                elapsed = time.time() - t0
+                results[full_name] = metrics
+                timings[full_name] = round(elapsed, 1)
+
+                print(f"MAPE={metrics['mape']:.1f}% RMSE={metrics['rmse']:.0f} "
+                      f"Dir={metrics['dir_acc']:.1f}% [{elapsed:.1f}s]")
+
+            except Exception as e:
+                elapsed = time.time() - t0
+                print(f"FAILED: {e} [{elapsed:.1f}s]")
+                results[full_name] = {
+                    "mape": 999.0, "rmse": 999.0, "dir_acc": 0.0,
+                    "n_samples": 0, "error": str(e),
+                }
+                timings[full_name] = round(elapsed, 1)
+
+            if device == "cuda":
+                torch.cuda.empty_cache()
+
+    return results, timings
+
+
+def print_comparison_table(title, results_dict, species_list, model_names):
+    """Print a MAPE comparison table for a set of models across species."""
+    print("\n")
+    print("=" * 90)
+    print(f"  {title}")
+    print("=" * 90)
+
+    header = f"  {'Model':<20}"
+    for sp in species_list:
+        header += f" {sp:>8}"
+    header += f" {'AVG':>8}"
+    print(header)
+    print("  " + "-" * (20 + 9 * (len(species_list) + 1)))
+
+    model_avgs = {}
+    for model_name in model_names:
+        row = f"  {model_name:<20}"
+        mapes = []
+        for sp in species_list:
+            if model_name in results_dict.get(sp, {}):
+                mape = results_dict[sp][model_name]["mape"]
+                row += f" {mape:>7.1f}%"
+                if mape < 900:
+                    mapes.append(mape)
+            else:
+                row += f" {'N/A':>8}"
+        avg_mape = np.mean(mapes) if mapes else 999.0
+        model_avgs[model_name] = avg_mape
+        row += f" {avg_mape:>7.1f}%"
+        print(row)
+
+    # Best per species
+    print()
+    print("  " + "-" * (20 + 9 * (len(species_list) + 1)))
+    best_row = f"  {'BEST':<20}"
+    for sp in species_list:
+        sp_results = results_dict.get(sp, {})
+        valid_models = {m: sp_results[m] for m in model_names if m in sp_results}
+        if valid_models:
+            best_model = min(valid_models, key=lambda m: valid_models[m].get("mape", 999))
+            best_row += f" {valid_models[best_model]['mape']:>7.1f}%"
+        else:
+            best_row += f" {'N/A':>8}"
+    best_row += f" {'':>8}"
+    print(best_row)
+
+    return model_avgs
+
+
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("=" * 70)
     print("  Unified DL Model Comparison -- Fish Price Prediction")
+    print("  (with v6 preprocessing: smoothed target, regime split, VMD)")
     print("=" * 70)
     print(f"PyTorch: {torch.__version__}")
     print(f"Device: {device}")
@@ -927,15 +1172,19 @@ def main():
     # Models to train (TFT handled separately)
     trainable_models = ["GRU", "LSTM", "BiLSTM+Attn", "CNN-LSTM", "Transformer", "PatchTST"]
 
-    # Results: {species: {model_name: {mape, rmse, dir_acc, ...}}}
-    all_results = defaultdict(dict)
-    timing = defaultdict(dict)
+    # Results containers
+    # Table 1: raw DL (no preprocessing)
+    raw_results = defaultdict(dict)      # {species: {model_name: metrics}}
+    raw_timing = defaultdict(dict)
+    # Table 2: +preprocessing (smoothed target + regime split + VMD)
+    pp_results = defaultdict(dict)
+    pp_timing = defaultdict(dict)
 
     # Load TFT results if available
     print("\n--- Loading TFT results ---")
     tft_results = load_tft_results()
     for sp_name, res in tft_results.items():
-        all_results[sp_name]["TFT"] = res
+        raw_results[sp_name]["TFT"] = res
         print(f"  {sp_name}: MAPE={res['mape']:.1f}%")
     if not tft_results:
         print("  (no TFT results available)")
@@ -943,8 +1192,17 @@ def main():
     # Process each species
     for cfg in SPECIES_CONFIGS:
         sp = cfg["species"]
+        use_smoothed = cfg.get("smoothed", False)
+        use_regime = cfg.get("regime_split", False)
+
         print(f"\n{'=' * 70}")
-        print(f"  Species: {sp} (state={cfg['state']}, spec={cfg['spec']})")
+        flags = []
+        if use_smoothed:
+            flags.append("smoothed")
+        if use_regime:
+            flags.append("regime_split")
+        flag_str = f" [{', '.join(flags)}]" if flags else ""
+        print(f"  Species: {sp} (state={cfg['state']}, spec={cfg['spec']}){flag_str}")
         print(f"{'=' * 70}")
 
         # Build daily series (gap-filled)
@@ -964,194 +1222,270 @@ def main():
         n_features = features.shape[1]
         print(f"  Data: {len(prices)} days (after {min_offset}-day warmup), {n_features} features")
 
-        # Train/test split: 80/20
+        # Smoothed target: 7-day moving average for target only
+        if use_smoothed and len(prices) > 7:
+            target_prices = np.convolve(prices, np.ones(7) / 7, mode="same")
+            print(f"  Smoothed target: 7-day MA applied ({len(target_prices)} pts)")
+        else:
+            target_prices = prices
+
+        # ────────────────────────────────────────────────────────────
+        # TABLE 1: Raw DL models (no VMD, no smoothed target, no regime)
+        # ────────────────────────────────────────────────────────────
+        print(f"\n  --- Table 1: Raw DL ({sp}) ---")
+
         split_idx = int(len(features) * 0.8)
         train_feat = features[:split_idx]
         test_feat = features[split_idx:]
-        train_prices = prices[:split_idx]
-        test_prices = prices[split_idx:]
+        train_prices_raw = prices[:split_idx]
+        test_prices_raw = prices[split_idx:]
 
         # Normalize features
-        train_norm, test_norm, feat_mean, feat_std = normalize_features(train_feat, test_feat)
+        train_norm, test_norm, _, _ = normalize_features(train_feat, test_feat)
 
-        # Price stats for denormalization (feature index 11 = price_lag1 in v6,
-        # but we use the raw price column from the series for targets).
-        # Compute price normalization stats from training prices directly.
-        price_mean = float(np.mean(train_prices))
-        price_std = float(np.std(train_prices))
-        if price_std < 1e-8:
-            price_std = 1.0
+        # Price stats (raw)
+        price_mean_raw = float(np.mean(train_prices_raw))
+        price_std_raw = float(np.std(train_prices_raw))
+        if price_std_raw < 1e-8:
+            price_std_raw = 1.0
 
-        # Normalize targets too (using price stats)
-        train_prices_norm = (train_prices - price_mean) / price_std
-        test_prices_norm = (test_prices - price_mean) / price_std
+        train_prices_norm = (train_prices_raw - price_mean_raw) / price_std_raw
+        test_prices_norm = (test_prices_raw - price_mean_raw) / price_std_raw
 
-        # Create datasets
-        train_ds = SlidingWindowDataset(train_norm, train_prices_norm)
-        test_ds = SlidingWindowDataset(test_norm, test_prices_norm)
+        res, tim = train_and_evaluate_on_split(
+            train_norm, test_norm, train_prices_norm, test_prices_norm,
+            price_mean_raw, price_std_raw, n_features, trainable_models, device,
+            use_vmd=False,
+        )
+        for k, v in res.items():
+            raw_results[sp][k] = v
+        for k, v in tim.items():
+            raw_timing[sp][k] = v
 
-        if len(train_ds) < 50 or len(test_ds) < 10:
-            print(f"  SKIP: insufficient samples (train={len(train_ds)}, test={len(test_ds)})")
-            continue
+        # ────────────────────────────────────────────────────────────
+        # TABLE 2: +Preprocessing (smoothed target + VMD + regime split)
+        # ────────────────────────────────────────────────────────────
+        if use_regime:
+            # Regime split for 방어: train/eval separately for winter vs off-season
+            print(f"\n  --- Table 2: +Preprocessing with regime split ({sp}) ---")
 
-        train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-        test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+            regimes = [
+                ({11, 12, 1, 2}, "winter"),
+                ({3, 4, 5, 6, 7, 8, 9, 10}, "other"),
+            ]
+            for regime_months, regime_name in regimes:
+                print(f"\n  >> Regime: {regime_name} (months={sorted(regime_months)})")
 
-        print(f"  Samples: train={len(train_ds)}, test={len(test_ds)}")
+                # Filter to regime months
+                mask = np.array([parse_date(d).month in regime_months for d in dates])
+                regime_features = features[mask]
+                regime_targets = target_prices[mask]
+                regime_prices = prices[mask]
+                regime_dates = [d for d, m in zip(dates, mask) if m]
 
-        # Also create a validation split from training data for early stopping
-        val_split = int(len(train_ds) * 0.9)
-        train_subset = torch.utils.data.Subset(train_ds, range(val_split))
-        val_subset = torch.utils.data.Subset(train_ds, range(val_split, len(train_ds)))
-        train_sub_loader = DataLoader(train_subset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-        val_sub_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+                if len(regime_features) < 100:
+                    print(f"    SKIP: regime '{regime_name}' has {len(regime_features)} < 100 samples")
+                    continue
 
-        for model_name in trainable_models:
-            print(f"\n  [{model_name}]", end=" ", flush=True)
-            t0 = time.time()
+                # Train/test split: 80/20
+                r_split = int(len(regime_features) * 0.8)
+                r_train_feat = regime_features[:r_split]
+                r_test_feat = regime_features[r_split:]
+                r_train_targets = regime_targets[:r_split]
+                r_test_targets = regime_targets[r_split:]
 
-            try:
-                model = create_model(model_name, n_features)
-                n_params = count_parameters(model)
-                print(f"({n_params:,} params)", end=" ", flush=True)
+                # Normalize features
+                r_train_norm, r_test_norm, _, _ = normalize_features(r_train_feat, r_test_feat)
 
-                train_info = train_model(
-                    model, train_sub_loader, val_sub_loader,
-                    epochs=EPOCHS, lr=LR, device=device, patience=PATIENCE,
+                # Price stats for regime
+                r_price_mean = float(np.mean(r_train_targets))
+                r_price_std = float(np.std(r_train_targets))
+                if r_price_std < 1e-8:
+                    r_price_std = 1.0
+
+                r_train_norm_targets = (r_train_targets - r_price_mean) / r_price_std
+                r_test_norm_targets = (r_test_targets - r_price_mean) / r_price_std
+
+                # Non-VMD with smoothed target
+                res_pp, tim_pp = train_and_evaluate_on_split(
+                    r_train_norm, r_test_norm, r_train_norm_targets, r_test_norm_targets,
+                    r_price_mean, r_price_std, n_features, trainable_models, device,
+                    label_prefix="", use_vmd=False,
                 )
-                print(f"ep={train_info['best_epoch']}", end=" ", flush=True)
+                # Store regime results with regime label
+                for k, v in res_pp.items():
+                    pp_results[f"{sp}({regime_name})"][k] = v
+                for k, v in tim_pp.items():
+                    pp_timing[f"{sp}({regime_name})"][k] = v
 
-                metrics = run_test(model, test_loader, device, price_mean, price_std)
-                elapsed = time.time() - t0
+                # VMD variant
+                print(f"\n    >> VMD decomposition for {regime_name} regime")
+                res_vmd, tim_vmd = train_and_evaluate_on_split(
+                    r_train_norm, r_test_norm, r_train_norm_targets, r_test_norm_targets,
+                    r_price_mean, r_price_std, n_features, trainable_models, device,
+                    use_vmd=True,
+                )
+                for k, v in res_vmd.items():
+                    pp_results[f"{sp}({regime_name})"][k] = v
+                for k, v in tim_vmd.items():
+                    pp_timing[f"{sp}({regime_name})"][k] = v
 
-                all_results[sp][model_name] = metrics
-                timing[sp][model_name] = round(elapsed, 1)
+            # Use winter result for the main pp_results[sp] entry
+            if f"{sp}(winter)" in pp_results:
+                pp_results[sp] = dict(pp_results[f"{sp}(winter)"])
+                pp_timing[sp] = dict(pp_timing.get(f"{sp}(winter)", {}))
 
-                print(f"MAPE={metrics['mape']:.1f}% RMSE={metrics['rmse']:.0f} "
-                      f"Dir={metrics['dir_acc']:.1f}% [{elapsed:.1f}s]")
+        else:
+            # No regime split: use smoothed target + VMD on full data
+            print(f"\n  --- Table 2: +Preprocessing ({sp}) ---")
 
-            except Exception as e:
-                elapsed = time.time() - t0
-                print(f"FAILED: {e} [{elapsed:.1f}s]")
-                all_results[sp][model_name] = {
-                    "mape": 999.0, "rmse": 999.0, "dir_acc": 0.0,
-                    "n_samples": 0, "error": str(e),
-                }
-                timing[sp][model_name] = round(elapsed, 1)
+            train_targets_pp = target_prices[:split_idx]
+            test_targets_pp = target_prices[split_idx:]
 
-            # Free GPU memory between models
-            if device == "cuda":
-                torch.cuda.empty_cache()
+            # Price stats (smoothed or raw depending on config)
+            pp_price_mean = float(np.mean(train_targets_pp))
+            pp_price_std = float(np.std(train_targets_pp))
+            if pp_price_std < 1e-8:
+                pp_price_std = 1.0
+
+            train_targets_pp_norm = (train_targets_pp - pp_price_mean) / pp_price_std
+            test_targets_pp_norm = (test_targets_pp - pp_price_mean) / pp_price_std
+
+            # Non-VMD with smoothed target (same as raw for non-smoothed species)
+            res_pp, tim_pp = train_and_evaluate_on_split(
+                train_norm, test_norm, train_targets_pp_norm, test_targets_pp_norm,
+                pp_price_mean, pp_price_std, n_features, trainable_models, device,
+                use_vmd=False,
+            )
+            for k, v in res_pp.items():
+                pp_results[sp][k] = v
+            for k, v in tim_pp.items():
+                pp_timing[sp][k] = v
+
+            # VMD variant
+            print(f"\n    >> VMD decomposition ({sp})")
+            res_vmd, tim_vmd = train_and_evaluate_on_split(
+                train_norm, test_norm, train_targets_pp_norm, test_targets_pp_norm,
+                pp_price_mean, pp_price_std, n_features, trainable_models, device,
+                use_vmd=True,
+            )
+            for k, v in res_vmd.items():
+                pp_results[sp][k] = v
+            for k, v in tim_vmd.items():
+                pp_timing[sp][k] = v
 
     # ── Results Summary ───────────────────────────────────────────
 
+    species_list = [cfg["species"] for cfg in SPECIES_CONFIGS if cfg["species"] in raw_results]
+
+    # Table 1: Raw DL models
+    raw_model_names = trainable_models + (["TFT"] if tft_results else [])
+    raw_avgs = print_comparison_table(
+        "Table 1: DL Models — Raw (no preprocessing)",
+        raw_results, species_list, raw_model_names,
+    )
+
+    # Table 2: +Preprocessing models
+    pp_species_list = sorted(pp_results.keys())
+    pp_model_names_set = set()
+    for sp_data in pp_results.values():
+        pp_model_names_set.update(sp_data.keys())
+    # Order: non-VMD first, then VMD variants
+    pp_model_names_ordered = []
+    for m in trainable_models:
+        if m in pp_model_names_set:
+            pp_model_names_ordered.append(m)
+    for m in trainable_models:
+        vmd_name = f"{m}+VMD"
+        if vmd_name in pp_model_names_set:
+            pp_model_names_ordered.append(vmd_name)
+    # Add any remaining
+    for m in sorted(pp_model_names_set):
+        if m not in pp_model_names_ordered:
+            pp_model_names_ordered.append(m)
+
+    pp_avgs = print_comparison_table(
+        "Table 2: DL Models — +Preprocessing (smoothed target + regime split + VMD)",
+        pp_results, pp_species_list, pp_model_names_ordered,
+    )
+
+    # Table 3: Best DL+preprocessing vs v6 LightGBM
     print("\n")
     print("=" * 90)
-    print("  RESULTS: MAPE (%) -- Lower is Better")
+    print("  Table 3: Best DL+Preprocessing vs v6 LightGBM")
     print("=" * 90)
-
-    # Header
-    species_list = [cfg["species"] for cfg in SPECIES_CONFIGS if cfg["species"] in all_results]
-    header = f"  {'Model':<15}"
+    print(f"  {'Species':<20} {'Best DL+PP':>15} {'Model':>20}")
+    print("  " + "-" * 55)
     for sp in species_list:
-        header += f" {sp:>8}"
-    header += f" {'AVG':>8}"
-    print(header)
-    print("  " + "-" * (15 + 9 * (len(species_list) + 1)))
-
-    # Per-model rows
-    model_avgs = {}
-    for model_name in MODEL_NAMES:
-        row = f"  {model_name:<15}"
-        mapes = []
-        for sp in species_list:
-            if model_name in all_results.get(sp, {}):
-                mape = all_results[sp][model_name]["mape"]
-                row += f" {mape:>7.1f}%"
-                if mape < 900:
-                    mapes.append(mape)
-            else:
-                row += f" {'N/A':>8}"
-        avg_mape = np.mean(mapes) if mapes else 999.0
-        model_avgs[model_name] = avg_mape
-        row += f" {avg_mape:>7.1f}%"
-        print(row)
-
-    # Best per species
+        sp_pp = pp_results.get(sp, {})
+        if sp_pp:
+            best_model = min(sp_pp, key=lambda m: sp_pp[m].get("mape", 999))
+            best_mape = sp_pp[best_model]["mape"]
+            print(f"  {sp:<20} {best_mape:>14.1f}% {best_model:>20}")
+        else:
+            print(f"  {sp:<20} {'N/A':>15} {'N/A':>20}")
     print()
-    print("  " + "-" * (15 + 9 * (len(species_list) + 1)))
-    best_row = f"  {'BEST':<15}"
-    for sp in species_list:
-        sp_results = all_results.get(sp, {})
-        if sp_results:
-            best_model = min(sp_results, key=lambda m: sp_results[m].get("mape", 999))
-            best_mape = sp_results[best_model]["mape"]
-            best_row += f" {best_mape:>7.1f}%"
-        else:
-            best_row += f" {'N/A':>8}"
-    best_row += f" {'':>8}"
-    print(best_row)
+    print("  (Compare against v6 LightGBM results from poc_v6 run)")
 
-    best_model_row = f"  {'(model)':<15}"
-    for sp in species_list:
-        sp_results = all_results.get(sp, {})
-        if sp_results:
-            best_model = min(sp_results, key=lambda m: sp_results[m].get("mape", 999))
-            # Abbreviate long names
-            abbrev = best_model[:8]
-            best_model_row += f" {abbrev:>8}"
-        else:
-            best_model_row += f" {'N/A':>8}"
-    best_model_row += f" {'':>8}"
-    print(best_model_row)
-
-    # Overall ranking
+    # Overall ranking across both tables
     print("\n")
     print("=" * 50)
-    print("  OVERALL MODEL RANKING (by avg MAPE)")
+    print("  OVERALL MODEL RANKING — Raw (by avg MAPE)")
     print("=" * 50)
-    ranked = sorted(model_avgs.items(), key=lambda x: x[1])
-    for rank, (model_name, avg) in enumerate(ranked, 1):
+    ranked_raw = sorted(raw_avgs.items(), key=lambda x: x[1])
+    for rank, (model_name, avg) in enumerate(ranked_raw, 1):
         marker = " <-- BEST" if rank == 1 else ""
         if avg < 900:
-            print(f"  {rank}. {model_name:<15} {avg:>7.2f}%{marker}")
+            print(f"  {rank}. {model_name:<20} {avg:>7.2f}%{marker}")
         else:
-            print(f"  {rank}. {model_name:<15}     N/A{marker}")
+            print(f"  {rank}. {model_name:<20}     N/A{marker}")
 
-    # Direction accuracy table
+    print("\n")
+    print("=" * 50)
+    print("  OVERALL MODEL RANKING — +Preprocessing (by avg MAPE)")
+    print("=" * 50)
+    ranked_pp = sorted(pp_avgs.items(), key=lambda x: x[1])
+    for rank, (model_name, avg) in enumerate(ranked_pp, 1):
+        marker = " <-- BEST" if rank == 1 else ""
+        if avg < 900:
+            print(f"  {rank}. {model_name:<20} {avg:>7.2f}%{marker}")
+        else:
+            print(f"  {rank}. {model_name:<20}     N/A{marker}")
+
+    # Direction accuracy table (raw)
     print("\n")
     print("=" * 90)
-    print("  RESULTS: Direction Accuracy (%) -- Higher is Better")
+    print("  Direction Accuracy (%) — Raw -- Higher is Better")
     print("=" * 90)
-    header = f"  {'Model':<15}"
+    header = f"  {'Model':<20}"
     for sp in species_list:
         header += f" {sp:>8}"
     print(header)
-    print("  " + "-" * (15 + 9 * len(species_list)))
-    for model_name in MODEL_NAMES:
-        row = f"  {model_name:<15}"
+    print("  " + "-" * (20 + 9 * len(species_list)))
+    for model_name in raw_model_names:
+        row = f"  {model_name:<20}"
         for sp in species_list:
-            if model_name in all_results.get(sp, {}):
-                da = all_results[sp][model_name].get("dir_acc", 0.0)
+            if model_name in raw_results.get(sp, {}):
+                da = raw_results[sp][model_name].get("dir_acc", 0.0)
                 row += f" {da:>7.1f}%"
             else:
                 row += f" {'N/A':>8}"
         print(row)
 
-    # Timing
+    # Training time (raw)
     print("\n")
     print("=" * 90)
-    print("  TRAINING TIME (seconds)")
+    print("  TRAINING TIME — Raw (seconds)")
     print("=" * 90)
-    header = f"  {'Model':<15}"
+    header = f"  {'Model':<20}"
     for sp in species_list:
         header += f" {sp:>8}"
     print(header)
-    print("  " + "-" * (15 + 9 * len(species_list)))
+    print("  " + "-" * (20 + 9 * len(species_list)))
     for model_name in trainable_models:
-        row = f"  {model_name:<15}"
+        row = f"  {model_name:<20}"
         for sp in species_list:
-            t = timing.get(sp, {}).get(model_name, 0)
+            t = raw_timing.get(sp, {}).get(model_name, 0)
             row += f" {t:>7.1f}s"
         print(row)
 
@@ -1170,22 +1504,35 @@ def main():
             "num_layers": NUM_LAYERS,
             "n_features": 68,
             "feature_set": "v6 (same as LightGBM)",
-            "models": MODEL_NAMES,
+            "preprocessing": {
+                "smoothed_target": "7-day MA for species with smoothed=True",
+                "regime_split": "winter (11,12,1,2) vs off-season for species with regime_split=True",
+                "vmd": "K=3 modes, alpha=2000, per-mode model training + summation",
+            },
+            "models_raw": trainable_models + ["TFT"],
+            "models_pp": pp_model_names_ordered,
             "species": [c["species"] for c in SPECIES_CONFIGS],
         },
         "device": device,
         "gpu": torch.cuda.get_device_name(0) if device == "cuda" else "N/A",
-        "results": {
-            sp: {
-                model: all_results[sp][model]
-                for model in all_results[sp]
-            }
-            for sp in all_results
+        "results_raw": {
+            sp: {model: raw_results[sp][model] for model in raw_results[sp]}
+            for sp in raw_results
         },
-        "timing": dict(timing),
-        "ranking": [
+        "results_preprocessing": {
+            sp: {model: pp_results[sp][model] for model in pp_results[sp]}
+            for sp in pp_results
+        },
+        "timing_raw": dict(raw_timing),
+        "timing_preprocessing": dict(pp_timing),
+        "ranking_raw": [
             {"rank": i + 1, "model": name, "avg_mape": round(avg, 2)}
-            for i, (name, avg) in enumerate(ranked)
+            for i, (name, avg) in enumerate(ranked_raw)
+            if avg < 900
+        ],
+        "ranking_preprocessing": [
+            {"rank": i + 1, "model": name, "avg_mape": round(avg, 2)}
+            for i, (name, avg) in enumerate(ranked_pp)
             if avg < 900
         ],
     }
