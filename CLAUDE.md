@@ -95,16 +95,18 @@ Key files:
 **Phase 3 (MCP Server):** Not started. Design at `docs/04_mcp_server_design.md`.
 - **Security Layer** (`docs/07_security.md`): Rate limiting, audit logging, optional API key auth
 
-## Prediction Model Routing
+## Prediction Model Configs
 
-Per-species best model for production deployment:
+Each prediction config is identified by a full tuple: `(species, state, packaging, spec, origin_class)`.
+Same species with different configs = different market = different model.
 
-| Species | Model | MAPE | Environment | Band Output |
-|---|---|---|---|---|
-| 넙치 | GRU Quantile | 10.2% | GPU (Docker) | p10/p50/p90 |
-| 감성돔 | GRU Quantile | 12.5% | GPU (Docker) | p10/p50/p90 |
-| 농어 | GRU Quantile | 12.8% | GPU (Docker) | p10/p50/p90 |
-| 우럭 | TFT | 14.7% | GPU (Docker) | TFT quantiles |
-| 도다리 | Transformer Quantile | 15.2% | GPU (Docker) | p10/p50/p90 |
-| 방어 | TFT | 15.6% | GPU (Docker) | TFT quantiles |
-| 참돔 | CNN-LSTM Quantile | 16.3% | GPU (Docker) | p10/p50/p90 |
+### Tested Configs (20 total, DL models running on GB10)
+
+**Sashimi (중 grade, 7 configs):**
+넙치_활_kg_중, 우럭_활_kg_중, 방어_선_kg_중_dom, 참돔_활_kg_중_dom, 농어_활_kg_중_dom, 도다리_활_kg_중, 감성돔_활_kg_중_dom
+
+**Standard (8 configs):**
+감숭어_활_kg_중, 참숭어_활_kg_중, 쭈꾸미_선_box_중_dom, 민어_선_SP_중, 깐굴_선_box_소, 바위굴_활_box_대, 수꽃게_활_kg_중, 암꽃게_활_kg_중
+
+**Premium 활어 (5 configs):**
+수꽃게_활_kg_대, 암꽃게_활_kg_대, 넙치_활_kg_2미, 참돔_활_kg_2미_dom, 농어_활_kg_1미_dom
