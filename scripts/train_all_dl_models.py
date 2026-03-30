@@ -13,6 +13,13 @@ Models:
   6. Simplified Informer (Transformer encoder, direct multi-step decoder)
   7. PatchTST-style (patched input + Transformer encoder)
 
+Preprocessing (v10 — 5 advanced fixes on top of v6 68-feature set):
+  Fix 1: Winsorized Mean   — clip daily lot prices to p10/p90 of rolling 30-day window
+  Fix 2: Log-Transform Target — predict log(price), exp() for final MAPE
+  Fix 3: Outlier Day Removal  — remove days >3σ from rolling 30d mean (training only)
+  Fix 4: Origin-Weighted Aggregation — weight lots by origin trading frequency
+  Fix 5: Adaptive VMD K   — K=5 for high-volatility, K=3 for low
+
 Runs inside Docker container with PyTorch + CUDA.
 
 Usage (inside Docker):
@@ -160,6 +167,67 @@ def rsi(prices, period=14):
     return out
 
 
+# ── Fix 1: Winsorized Mean ────────────────────────────────────────
+
+
+def winsorized_daily_price(day_prices, recent_30d_prices):
+    """Clip extreme lots to p10/p90 of recent 30-day distribution."""
+    if len(recent_30d_prices) < 10:
+        return float(np.mean(day_prices))
+    p10, p90 = np.percentile(recent_30d_prices, [10, 90])
+    clipped = [max(p10, min(p90, p)) for p in day_prices]
+    return float(np.mean(clipped))
+
+
+# ── Fix 4: Origin-Weighted Aggregation ───────────────────────────
+
+
+def origin_weight(origin, origin_freq_30d, max_freq_30d):
+    """Higher weight for frequently-trading origins."""
+    freq = origin_freq_30d.get(origin, 1)
+    return freq / max_freq_30d if max_freq_30d > 0 else 1.0
+
+
+def weighted_mean(prices, weights):
+    """Weighted mean; falls back to simple mean if weights sum to 0."""
+    w = np.array(weights, dtype=float)
+    total = w.sum()
+    if total <= 0:
+        return float(np.mean(prices))
+    return float(np.dot(prices, w) / total)
+
+
+# ── Fix 5: Adaptive VMD K ────────────────────────────────────────
+
+
+def adaptive_vmd_k(prices, window=90):
+    """Use K=5 for high-volatility periods, K=3 for low."""
+    a = np.array(prices, dtype=float)
+    if len(a) < window:
+        return 3
+    recent_std = np.std(a[-window:])
+    overall_std = np.std(a)
+    return 5 if recent_std > overall_std else 3
+
+
+# ── Fix 3: Outlier Day Detection ─────────────────────────────────
+
+
+def flag_outlier_days(prices, window=30, n_sigma=3):
+    """
+    Return a boolean array (True = outlier) using rolling mean/std.
+    Outliers are flagged but only excluded from training.
+    """
+    is_outlier = np.zeros(len(prices), dtype=bool)
+    for i in range(window, len(prices)):
+        window_prices = prices[max(0, i - window):i]
+        mu = np.mean(window_prices)
+        sigma = np.std(window_prices)
+        if sigma > 0 and abs(prices[i] - mu) > n_sigma * sigma:
+            is_outlier[i] = True
+    return is_outlier
+
+
 # ── VMD Decomposition ─────────────────────────────────────────────
 
 
@@ -222,11 +290,21 @@ def build_supply_context(data: dict, n: int) -> dict:
 def build_species_daily_series(data: dict, cfg: dict) -> dict:
     """
     Extract daily price/high/low/lots/origins/qty for one species config.
+
+    v10 Fixes applied:
+      Fix 1: Winsorized Mean — clip extreme lots to p10/p90 of rolling 30-day window
+      Fix 4: Origin-Weighted Aggregation — weight lots by origin trading frequency
+
     Returns a dict with gap-filled continuous daily arrays and corresponding date strings.
     Forward-fills non-trading days (for price, high, low; lots/origins/qty become 0 on non-trading days).
     """
     n = len(data["trade_date"])
-    day_data = defaultdict(lambda: {"prices": [], "highs": [], "lows": [], "origins": set(), "qty": 0})
+    # Collect raw per-lot data: (price, qty, origin) tuples per day
+    day_lots = defaultdict(list)
+    day_highs = defaultdict(list)
+    day_lows = defaultdict(list)
+    day_origins = defaultdict(set)
+
     for i in range(n):
         if data["species"][i] != cfg["species"]:
             continue
@@ -239,29 +317,74 @@ def build_species_daily_series(data: dict, cfg: dict) -> dict:
         if cfg["domestic"] and is_foreign(data["origin"][i]):
             continue
         d = data["trade_date"][i]
-        day_data[d]["prices"].append(data["price_avg"][i])
-        day_data[d]["highs"].append(data["price_high"][i])
-        day_data[d]["lows"].append(data["price_low"][i])
-        if data["origin"][i]:
-            day_data[d]["origins"].add(data["origin"][i])
-        day_data[d]["qty"] += data["quantity"][i]
+        price = data["price_avg"][i]
+        qty = data["quantity"][i]
+        origin = data["origin"][i] or ""
+        day_lots[d].append((price, qty, origin))
+        day_highs[d].append(data["price_high"][i])
+        day_lows[d].append(data["price_low"][i])
+        if origin:
+            day_origins[d].add(origin)
 
-    # Compute per-day aggregates on trading days
-    trading_records = {}
-    for d in sorted(day_data.keys()):
-        dd = day_data[d]
-        trading_records[d] = {
-            "price": float(np.mean(dd["prices"])),
-            "high": max(dd["highs"]),
-            "low": min(dd["lows"]),
-            "n_lots": len(dd["prices"]),
-            "n_origins": len(dd["origins"]),
-            "qty": dd["qty"],
-        }
-    sorted_dates = sorted(trading_records.keys())
+    sorted_dates = sorted(day_lots.keys())
 
     if len(sorted_dates) < MIN_DAYS:
         return {"prices": np.array([]), "dates": [], "trading_dates": set()}
+
+    # Build rolling 30-day lot-price buffer and origin-frequency counter
+    trading_records = {}
+    rolling_lot_prices = []  # flat list of all lot prices in last 30 days
+    origin_days_seen = defaultdict(list)  # origin -> list of day-indices
+
+    for day_i, d in enumerate(sorted_dates):
+        lots = day_lots[d]
+        day_prices = [lp[0] for lp in lots]
+        day_origins_list = [lp[2] for lp in lots]
+
+        # --- Build rolling 30-day origin frequency ---
+        origin_freq_30d = defaultdict(int)
+        for origin_d, origin_day_idxs in origin_days_seen.items():
+            count = sum(1 for di in origin_day_idxs if day_i - 30 <= di < day_i)
+            if count > 0:
+                origin_freq_30d[origin_d] = count
+        max_freq_30d = max(origin_freq_30d.values()) if origin_freq_30d else 1
+
+        # --- Fix 4: per-lot weights by origin frequency ---
+        lot_weights = [
+            origin_weight(orig, origin_freq_30d, max_freq_30d)
+            for orig in day_origins_list
+        ]
+
+        # --- Fix 1: winsorize using rolling 30d window, then weighted mean ---
+        if len(rolling_lot_prices) >= 10:
+            p10, p90 = np.percentile(rolling_lot_prices, [10, 90])
+            clipped_prices = [max(p10, min(p90, p)) for p in day_prices]
+        else:
+            clipped_prices = day_prices
+
+        daily_price = weighted_mean(clipped_prices, lot_weights)
+
+        trading_records[d] = {
+            "price": daily_price,
+            "high": max(day_highs[d]),
+            "low": min(day_lows[d]),
+            "n_lots": len(lots),
+            "n_origins": len(day_origins[d]),
+            "qty": sum(lp[1] for lp in lots),
+        }
+
+        # Update rolling buffer (keep ~30 days of lot prices)
+        rolling_lot_prices.extend(day_prices)
+        if day_i >= 30:
+            rolling_lot_prices = [
+                p
+                for d2 in sorted_dates[max(0, day_i - 29):day_i + 1]
+                for p in [lp[0] for lp in day_lots[d2]]
+            ]
+
+        # Update origin days-seen index
+        for orig in day_origins[d]:
+            origin_days_seen[orig].append(day_i)
 
     # Build continuous daily index with forward-fill
     first_dt = datetime.strptime(sorted_dates[0], "%Y.%m.%d")
@@ -804,7 +927,11 @@ def run_test(model: nn.Module, test_loader: DataLoader, device: str,
     """
     Run model on test set and compute metrics.
     Returns MAPE (%), RMSE (original scale), and direction accuracy (%).
-    price_mean/price_std are used to denormalize the price column (feature index 0).
+
+    Fix 2 (log-transform target): denormalization chain is:
+      log_price = pred * price_std + price_mean   (undo z-score)
+      raw_price = exp(log_price)                   (undo log transform)
+    MAPE is computed on raw (exp'd) prices.
     """
     model.train(False)
     all_preds = []
@@ -823,11 +950,15 @@ def run_test(model: nn.Module, test_loader: DataLoader, device: str,
     preds = np.concatenate(all_preds, axis=0)   # (n, horizon)
     actuals = np.concatenate(all_actuals, axis=0)  # (n, horizon)
 
-    # Denormalize: targets were normalized with price stats (feature index 0)
-    preds_denorm = preds * price_std + price_mean
-    actuals_denorm = actuals * price_std + price_mean
+    # Denormalize z-score to get log-prices
+    preds_log = preds * price_std + price_mean
+    actuals_log = actuals * price_std + price_mean
 
-    # MAPE over all steps
+    # Fix 2: exp() to get raw prices
+    preds_denorm = np.exp(preds_log)
+    actuals_denorm = np.exp(actuals_log)
+
+    # MAPE over all steps (on raw prices)
     valid = actuals_denorm > 0
     if valid.any():
         mape = float(np.mean(
@@ -836,13 +967,11 @@ def run_test(model: nn.Module, test_loader: DataLoader, device: str,
     else:
         mape = 999.0
 
-    # RMSE
+    # RMSE (on raw prices)
     rmse = float(np.sqrt(np.mean((preds_denorm - actuals_denorm) ** 2)))
 
     # Direction accuracy: compare direction of day-1 prediction vs actual
     if preds_denorm.shape[0] > 1:
-        # Direction: does next-day price go up or down relative to current window?
-        # Use first horizon step
         pred_first = preds_denorm[:, 0]
         actual_first = actuals_denorm[:, 0]
         pred_dir = pred_first[1:] > pred_first[:-1]
@@ -915,12 +1044,19 @@ def load_tft_results() -> dict:
 def train_and_evaluate_on_split(
     train_norm, test_norm, train_targets_norm, test_targets_norm,
     price_mean, price_std, n_features, trainable_models, device,
-    label_prefix="", use_vmd=False,
+    label_prefix="", use_vmd=False, raw_train_prices=None,
 ):
     """
     Train all DL models on a single train/test split and return metrics.
-    If use_vmd=True, decompose targets into K=3 VMD modes, train per-mode models,
+    If use_vmd=True, decompose targets using adaptive K (Fix 5), train per-mode models,
     and recombine predictions by summation.
+
+    Fix 2: targets are log-transformed. Denormalization:
+      log_price = pred * price_std + price_mean
+      raw_price = exp(log_price)
+
+    Fix 5: adaptive VMD K based on recent volatility (needs raw_train_prices).
+
     Returns (results_dict, timing_dict) where keys are model names.
     """
     results = {}
@@ -984,10 +1120,14 @@ def train_and_evaluate_on_split(
                 torch.cuda.empty_cache()
     else:
         # VMD decomposition training
-        VMD_K = 3
+        # Fix 5: adaptive K based on recent volatility of raw (not log) prices
+        if raw_train_prices is not None and len(raw_train_prices) > 0:
+            VMD_K = adaptive_vmd_k(raw_train_prices)
+        else:
+            VMD_K = 3
+        print(f"    Adaptive VMD K={VMD_K}")
+
         # Decompose the training targets (1D series of all training target values)
-        # We decompose the flat training target series, then build per-mode sliding windows.
-        # The test targets remain as-is for evaluation; we sum per-mode predictions.
         train_target_flat = train_targets_norm.copy()
         modes = decompose_vmd(train_target_flat, K=VMD_K)
 
@@ -1040,11 +1180,15 @@ def train_and_evaluate_on_split(
                 preds = np.concatenate(all_preds, axis=0)
                 actuals = np.concatenate(all_actuals, axis=0)
 
-                # Denormalize
-                preds_denorm = preds * price_std + price_mean
-                actuals_denorm = actuals * price_std + price_mean
+                # Denormalize z-score to get log-prices
+                preds_log = preds * price_std + price_mean
+                actuals_log = actuals * price_std + price_mean
 
-                # MAPE
+                # Fix 2: exp() to get raw prices
+                preds_denorm = np.exp(preds_log)
+                actuals_denorm = np.exp(actuals_log)
+
+                # MAPE (on raw prices)
                 valid = actuals_denorm > 0
                 if valid.any():
                     mape = float(np.mean(
@@ -1053,7 +1197,7 @@ def train_and_evaluate_on_split(
                 else:
                     mape = 999.0
 
-                # RMSE
+                # RMSE (on raw prices)
                 rmse = float(np.sqrt(np.mean((preds_denorm - actuals_denorm) ** 2)))
 
                 # Direction accuracy
@@ -1147,7 +1291,8 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("=" * 70)
     print("  Unified DL Model Comparison -- Fish Price Prediction")
-    print("  (with v6 preprocessing: smoothed target, regime split, VMD)")
+    print("  (with v10 preprocessing: winsorized, log-target, outlier removal,")
+    print("   origin-weight, adaptive VMD, smoothed target, regime split)")
     print("=" * 70)
     print(f"PyTorch: {torch.__version__}")
     print(f"Device: {device}")
@@ -1196,16 +1341,16 @@ def main():
         use_regime = cfg.get("regime_split", False)
 
         print(f"\n{'=' * 70}")
-        flags = []
+        flags = ["v10"]
         if use_smoothed:
             flags.append("smoothed")
         if use_regime:
             flags.append("regime_split")
-        flag_str = f" [{', '.join(flags)}]" if flags else ""
+        flag_str = f" [{', '.join(flags)}]"
         print(f"  Species: {sp} (state={cfg['state']}, spec={cfg['spec']}){flag_str}")
         print(f"{'=' * 70}")
 
-        # Build daily series (gap-filled)
+        # Build daily series (gap-filled) — Fix 1 + Fix 4 applied inside
         series = build_species_daily_series(data, cfg)
         prices = series["prices"]
         dates = series["dates"]
@@ -1213,7 +1358,7 @@ def main():
             print(f"  SKIP: insufficient data ({len(prices)} days < {MIN_DAYS})")
             continue
 
-        # Build 68 v6 features
+        # Build 68 features (computed on winsorized/origin-weighted prices)
         features, min_offset = build_features_68(series, ctx, sp)
         # Trim leading rows that lack enough history for percentile_90d etc.
         features = features[min_offset:]
@@ -1222,40 +1367,59 @@ def main():
         n_features = features.shape[1]
         print(f"  Data: {len(prices)} days (after {min_offset}-day warmup), {n_features} features")
 
-        # Smoothed target: 7-day moving average for target only
-        if use_smoothed and len(prices) > 7:
-            target_prices = np.convolve(prices, np.ones(7) / 7, mode="same")
-            print(f"  Smoothed target: 7-day MA applied ({len(target_prices)} pts)")
+        # Fix 3: flag outlier days (on raw winsorized prices)
+        outlier_mask = flag_outlier_days(prices)
+        n_outliers = int(outlier_mask.sum())
+        print(f"  Outlier days flagged: {n_outliers} (excluded from training only)")
+
+        # Fix 2: log-transform target
+        log_prices = np.log(np.maximum(prices, 1.0))
+
+        # Smoothed target: 7-day moving average applied AFTER log-transform
+        if use_smoothed and len(log_prices) > 7:
+            target_log_prices = np.convolve(log_prices, np.ones(7) / 7, mode="same")
+            print(f"  Smoothed target: 7-day MA on log-prices ({len(target_log_prices)} pts)")
         else:
-            target_prices = prices
+            target_log_prices = log_prices
 
         # ────────────────────────────────────────────────────────────
         # TABLE 1: Raw DL models (no VMD, no smoothed target, no regime)
+        #   Still uses log-target + outlier removal + winsorized prices
         # ────────────────────────────────────────────────────────────
-        print(f"\n  --- Table 1: Raw DL ({sp}) ---")
+        print(f"\n  --- Table 1: DL with v10 preprocessing ({sp}) ---")
 
         split_idx = int(len(features) * 0.8)
-        train_feat = features[:split_idx]
+
+        # Fix 3: remove outlier days from training split only
+        train_outlier_mask = outlier_mask[:split_idx]
+        train_clean_mask = ~train_outlier_mask
+        n_train_outliers = int(train_outlier_mask.sum())
+        if n_train_outliers > 0:
+            print(f"  Removing {n_train_outliers} outlier days from training")
+
+        train_feat = features[:split_idx][train_clean_mask]
         test_feat = features[split_idx:]
-        train_prices_raw = prices[:split_idx]
-        test_prices_raw = prices[split_idx:]
+        train_log_prices = log_prices[:split_idx][train_clean_mask]
+        test_log_prices = log_prices[split_idx:]
+        # Keep raw prices for adaptive VMD K computation (Fix 5)
+        train_prices_raw_for_vmd = prices[:split_idx]
 
         # Normalize features
         train_norm, test_norm, _, _ = normalize_features(train_feat, test_feat)
 
-        # Price stats (raw)
-        price_mean_raw = float(np.mean(train_prices_raw))
-        price_std_raw = float(np.std(train_prices_raw))
-        if price_std_raw < 1e-8:
-            price_std_raw = 1.0
+        # Fix 2: z-score normalize log-prices (not raw prices)
+        log_price_mean = float(np.mean(train_log_prices))
+        log_price_std = float(np.std(train_log_prices))
+        if log_price_std < 1e-8:
+            log_price_std = 1.0
 
-        train_prices_norm = (train_prices_raw - price_mean_raw) / price_std_raw
-        test_prices_norm = (test_prices_raw - price_mean_raw) / price_std_raw
+        train_log_norm = (train_log_prices - log_price_mean) / log_price_std
+        test_log_norm = (test_log_prices - log_price_mean) / log_price_std
 
         res, tim = train_and_evaluate_on_split(
-            train_norm, test_norm, train_prices_norm, test_prices_norm,
-            price_mean_raw, price_std_raw, n_features, trainable_models, device,
-            use_vmd=False,
+            train_norm, test_norm, train_log_norm, test_log_norm,
+            log_price_mean, log_price_std, n_features, trainable_models, device,
+            use_vmd=False, raw_train_prices=train_prices_raw_for_vmd,
         )
         for k, v in res.items():
             raw_results[sp][k] = v
@@ -1263,7 +1427,7 @@ def main():
             raw_timing[sp][k] = v
 
         # ────────────────────────────────────────────────────────────
-        # TABLE 2: +Preprocessing (smoothed target + VMD + regime split)
+        # TABLE 2: +Preprocessing (smoothed log-target + VMD + regime split)
         # ────────────────────────────────────────────────────────────
         if use_regime:
             # Regime split for 방어: train/eval separately for winter vs off-season
@@ -1277,11 +1441,11 @@ def main():
                 print(f"\n  >> Regime: {regime_name} (months={sorted(regime_months)})")
 
                 # Filter to regime months
-                mask = np.array([parse_date(d).month in regime_months for d in dates])
-                regime_features = features[mask]
-                regime_targets = target_prices[mask]
-                regime_prices = prices[mask]
-                regime_dates = [d for d, m in zip(dates, mask) if m]
+                month_mask = np.array([parse_date(d).month in regime_months for d in dates])
+                regime_features = features[month_mask]
+                regime_target_log = target_log_prices[month_mask]
+                regime_prices = prices[month_mask]
+                regime_outlier_mask = outlier_mask[month_mask]
 
                 if len(regime_features) < 100:
                     print(f"    SKIP: regime '{regime_name}' has {len(regime_features)} < 100 samples")
@@ -1289,28 +1453,38 @@ def main():
 
                 # Train/test split: 80/20
                 r_split = int(len(regime_features) * 0.8)
-                r_train_feat = regime_features[:r_split]
+
+                # Fix 3: remove outlier days from training
+                r_train_outliers = regime_outlier_mask[:r_split]
+                r_train_clean = ~r_train_outliers
+                n_r_outliers = int(r_train_outliers.sum())
+                if n_r_outliers > 0:
+                    print(f"    Removing {n_r_outliers} outlier days from regime training")
+
+                r_train_feat = regime_features[:r_split][r_train_clean]
                 r_test_feat = regime_features[r_split:]
-                r_train_targets = regime_targets[:r_split]
-                r_test_targets = regime_targets[r_split:]
+                r_train_targets = regime_target_log[:r_split][r_train_clean]
+                r_test_targets = regime_target_log[r_split:]
+                r_raw_train_prices = regime_prices[:r_split]
 
                 # Normalize features
                 r_train_norm, r_test_norm, _, _ = normalize_features(r_train_feat, r_test_feat)
 
-                # Price stats for regime
-                r_price_mean = float(np.mean(r_train_targets))
-                r_price_std = float(np.std(r_train_targets))
-                if r_price_std < 1e-8:
-                    r_price_std = 1.0
+                # Fix 2: z-score normalize log-prices for regime
+                r_log_mean = float(np.mean(r_train_targets))
+                r_log_std = float(np.std(r_train_targets))
+                if r_log_std < 1e-8:
+                    r_log_std = 1.0
 
-                r_train_norm_targets = (r_train_targets - r_price_mean) / r_price_std
-                r_test_norm_targets = (r_test_targets - r_price_mean) / r_price_std
+                r_train_norm_targets = (r_train_targets - r_log_mean) / r_log_std
+                r_test_norm_targets = (r_test_targets - r_log_mean) / r_log_std
 
-                # Non-VMD with smoothed target
+                # Non-VMD with smoothed log-target
                 res_pp, tim_pp = train_and_evaluate_on_split(
                     r_train_norm, r_test_norm, r_train_norm_targets, r_test_norm_targets,
-                    r_price_mean, r_price_std, n_features, trainable_models, device,
+                    r_log_mean, r_log_std, n_features, trainable_models, device,
                     label_prefix="", use_vmd=False,
+                    raw_train_prices=r_raw_train_prices,
                 )
                 # Store regime results with regime label
                 for k, v in res_pp.items():
@@ -1318,12 +1492,12 @@ def main():
                 for k, v in tim_pp.items():
                     pp_timing[f"{sp}({regime_name})"][k] = v
 
-                # VMD variant
+                # VMD variant (Fix 5: adaptive K)
                 print(f"\n    >> VMD decomposition for {regime_name} regime")
                 res_vmd, tim_vmd = train_and_evaluate_on_split(
                     r_train_norm, r_test_norm, r_train_norm_targets, r_test_norm_targets,
-                    r_price_mean, r_price_std, n_features, trainable_models, device,
-                    use_vmd=True,
+                    r_log_mean, r_log_std, n_features, trainable_models, device,
+                    use_vmd=True, raw_train_prices=r_raw_train_prices,
                 )
                 for k, v in res_vmd.items():
                     pp_results[f"{sp}({regime_name})"][k] = v
@@ -1336,38 +1510,49 @@ def main():
                 pp_timing[sp] = dict(pp_timing.get(f"{sp}(winter)", {}))
 
         else:
-            # No regime split: use smoothed target + VMD on full data
+            # No regime split: use smoothed log-target + VMD on full data
             print(f"\n  --- Table 2: +Preprocessing ({sp}) ---")
 
-            train_targets_pp = target_prices[:split_idx]
-            test_targets_pp = target_prices[split_idx:]
+            # Fix 3: remove outlier days from training
+            pp_train_outliers = outlier_mask[:split_idx]
+            pp_train_clean = ~pp_train_outliers
+            n_pp_outliers = int(pp_train_outliers.sum())
+            if n_pp_outliers > 0:
+                print(f"  Removing {n_pp_outliers} outlier days from training")
 
-            # Price stats (smoothed or raw depending on config)
-            pp_price_mean = float(np.mean(train_targets_pp))
-            pp_price_std = float(np.std(train_targets_pp))
-            if pp_price_std < 1e-8:
-                pp_price_std = 1.0
+            train_targets_pp = target_log_prices[:split_idx][pp_train_clean]
+            test_targets_pp = target_log_prices[split_idx:]
+            pp_train_feat = features[:split_idx][pp_train_clean]
 
-            train_targets_pp_norm = (train_targets_pp - pp_price_mean) / pp_price_std
-            test_targets_pp_norm = (test_targets_pp - pp_price_mean) / pp_price_std
+            # Re-normalize features for the cleaned training set
+            pp_train_norm, pp_test_norm, _, _ = normalize_features(pp_train_feat, test_feat)
 
-            # Non-VMD with smoothed target (same as raw for non-smoothed species)
+            # Fix 2: z-score normalize log-prices (smoothed or raw log)
+            pp_log_mean = float(np.mean(train_targets_pp))
+            pp_log_std = float(np.std(train_targets_pp))
+            if pp_log_std < 1e-8:
+                pp_log_std = 1.0
+
+            train_targets_pp_norm = (train_targets_pp - pp_log_mean) / pp_log_std
+            test_targets_pp_norm = (test_targets_pp - pp_log_mean) / pp_log_std
+
+            # Non-VMD with smoothed log-target
             res_pp, tim_pp = train_and_evaluate_on_split(
-                train_norm, test_norm, train_targets_pp_norm, test_targets_pp_norm,
-                pp_price_mean, pp_price_std, n_features, trainable_models, device,
-                use_vmd=False,
+                pp_train_norm, pp_test_norm, train_targets_pp_norm, test_targets_pp_norm,
+                pp_log_mean, pp_log_std, n_features, trainable_models, device,
+                use_vmd=False, raw_train_prices=train_prices_raw_for_vmd,
             )
             for k, v in res_pp.items():
                 pp_results[sp][k] = v
             for k, v in tim_pp.items():
                 pp_timing[sp][k] = v
 
-            # VMD variant
+            # VMD variant (Fix 5: adaptive K)
             print(f"\n    >> VMD decomposition ({sp})")
             res_vmd, tim_vmd = train_and_evaluate_on_split(
-                train_norm, test_norm, train_targets_pp_norm, test_targets_pp_norm,
-                pp_price_mean, pp_price_std, n_features, trainable_models, device,
-                use_vmd=True,
+                pp_train_norm, pp_test_norm, train_targets_pp_norm, test_targets_pp_norm,
+                pp_log_mean, pp_log_std, n_features, trainable_models, device,
+                use_vmd=True, raw_train_prices=train_prices_raw_for_vmd,
             )
             for k, v in res_vmd.items():
                 pp_results[sp][k] = v
@@ -1381,7 +1566,7 @@ def main():
     # Table 1: Raw DL models
     raw_model_names = trainable_models + (["TFT"] if tft_results else [])
     raw_avgs = print_comparison_table(
-        "Table 1: DL Models — Raw (no preprocessing)",
+        "Table 1: DL Models — v10 preprocessing (winsorized, log-target, outlier removal)",
         raw_results, species_list, raw_model_names,
     )
 
@@ -1405,14 +1590,14 @@ def main():
             pp_model_names_ordered.append(m)
 
     pp_avgs = print_comparison_table(
-        "Table 2: DL Models — +Preprocessing (smoothed target + regime split + VMD)",
+        "Table 2: DL Models — +v10 PP (smoothed log-target + regime split + adaptive VMD)",
         pp_results, pp_species_list, pp_model_names_ordered,
     )
 
-    # Table 3: Best DL+preprocessing vs v6 LightGBM
+    # Table 3: Best DL+v10 preprocessing vs v10 LightGBM
     print("\n")
     print("=" * 90)
-    print("  Table 3: Best DL+Preprocessing vs v6 LightGBM")
+    print("  Table 3: Best DL+v10 PP vs v10 LightGBM")
     print("=" * 90)
     print(f"  {'Species':<20} {'Best DL+PP':>15} {'Model':>20}")
     print("  " + "-" * 55)
@@ -1425,7 +1610,7 @@ def main():
         else:
             print(f"  {sp:<20} {'N/A':>15} {'N/A':>20}")
     print()
-    print("  (Compare against v6 LightGBM results from poc_v6 run)")
+    print("  (Compare against v10 LightGBM results from poc_v10 run)")
 
     # Overall ranking across both tables
     print("\n")
@@ -1503,11 +1688,15 @@ def main():
             "hidden_size": HIDDEN_SIZE,
             "num_layers": NUM_LAYERS,
             "n_features": 68,
-            "feature_set": "v6 (same as LightGBM)",
+            "feature_set": "v10 (v6 68-feature set + 5 advanced preprocessing fixes)",
             "preprocessing": {
-                "smoothed_target": "7-day MA for species with smoothed=True",
+                "fix1_winsorized_mean": "clip daily lot prices to p10/p90 of rolling 30-day window",
+                "fix2_log_target": "predict log(price), exp() for final MAPE",
+                "fix3_outlier_removal": "remove days >3sigma from rolling 30d mean (training only)",
+                "fix4_origin_weighted": "weight lots by origin trading frequency (rolling 30d)",
+                "fix5_adaptive_vmd_k": "K=5 for high-volatility, K=3 for low",
+                "smoothed_target": "7-day MA on log-prices for species with smoothed=True",
                 "regime_split": "winter (11,12,1,2) vs off-season for species with regime_split=True",
-                "vmd": "K=3 modes, alpha=2000, per-mode model training + summation",
             },
             "models_raw": trainable_models + ["TFT"],
             "models_pp": pp_model_names_ordered,
