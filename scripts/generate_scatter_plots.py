@@ -507,10 +507,11 @@ def decompose_vmd(prices, K=3, alpha=2000):
         return [trend, prices - trend]
 
 
-def run_single_split(X, y, prices_raw, method, outlier_flags):
+def run_single_split(X, y, prices_raw, method, outlier_flags, od=None):
     """
     Single 80/20 train/test split.
-    Returns dict with actual, predicted, q10, q90 arrays (all in raw price space).
+    Returns dict with actual, predicted, q10, q90 arrays (all in raw price space),
+    plus test_dates and train_tail_dates for time series plotting.
     """
     n = len(X)
     split = int(n * 0.8)
@@ -566,7 +567,18 @@ def run_single_split(X, y, prices_raw, method, outlier_flags):
     q10 = np.exp(pred_q10_log) if pred_q10_log is not None else None
     q90 = np.exp(pred_q90_log) if pred_q90_log is not None else None
 
-    return {"actual": actual, "predicted": predicted, "q10": q10, "q90": q90}
+    # Date slices for time series plotting
+    test_dates = od[split:] if od is not None else None
+    train_tail_dates = od[max(0, split - 60):split] if od is not None else None
+    train_tail_actual = np.exp(y[max(0, split - 60):split])
+
+    return {
+        "actual": actual, "predicted": predicted, "q10": q10, "q90": q90,
+        "test_dates": test_dates,
+        "train_tail_dates": train_tail_dates,
+        "train_tail_actual": train_tail_actual,
+        "split_date": od[split] if od is not None and split < len(od) else None,
+    }
 
 
 # ── Plotting ──────────────────────────────────────────────────────────
@@ -663,6 +675,133 @@ def generate_scatter(actual, predicted, q10, q90, config_id, ax=None,
     return {"mape": mape, "rmse": rmse, "r2": r2, "n": n_pts}
 
 
+def generate_timeseries(
+    test_dates, actual, predicted, q10, q90,
+    train_tail_dates, train_tail_actual, split_date,
+    config_id, ax=None, save_path=None,
+):
+    """
+    Generate a time series plot of date vs price (actual and predicted).
+
+    Shows ~60 days of training tail for context (actual only), then the full
+    test set with actual and predicted lines plus a p10-p90 shaded band.
+    An inset scatter (actual vs predicted) is added in the lower-right corner.
+
+    Parameters
+    ----------
+    test_dates        : list[str]       — "YYYY.MM.DD" strings for test set
+    actual            : np.ndarray      — actual prices (test set)
+    predicted         : np.ndarray      — predicted prices (test set)
+    q10, q90          : np.ndarray|None — quantile bands (test set)
+    train_tail_dates  : list[str]       — "YYYY.MM.DD" strings for training tail
+    train_tail_actual : np.ndarray      — actual prices for training tail
+    split_date        : str|None        — "YYYY.MM.DD" of train/test boundary
+    config_id         : str
+    ax                : matplotlib Axes (for grid subplot); None → new figure
+    save_path         : Path; if given, saves the standalone figure
+    """
+    from matplotlib.dates import DateFormatter, AutoDateLocator
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+    standalone = ax is None
+    if standalone:
+        fig, ax = plt.subplots(figsize=(14, 6), dpi=150)
+
+    # Metrics
+    mape = float(np.mean(np.abs(predicted - actual) / np.maximum(actual, 1))) * 100
+    rmse = float(np.sqrt(mean_squared_error(actual, predicted)))
+
+    # Parse dates to datetime objects
+    def to_dt(d):
+        return datetime.strptime(d, "%Y.%m.%d")
+
+    test_dt = [to_dt(d) for d in test_dates]
+    tail_dt = [to_dt(d) for d in train_tail_dates] if train_tail_dates else []
+
+    # Training tail — actual only (context), slightly faded
+    if tail_dt:
+        ax.plot(tail_dt, train_tail_actual, color="black", linewidth=0.8,
+                alpha=0.35, label="_nolegend_")
+
+    # Vertical line marking train/test split
+    if split_date:
+        split_dt = to_dt(split_date)
+        ax.axvline(x=split_dt, color="gray", linestyle="--", linewidth=0.9,
+                   alpha=0.55, label="Train/Test split")
+
+    # p10-p90 shaded band (test set)
+    if q10 is not None and q90 is not None:
+        ax.fill_between(test_dt, q10, q90, color="#2196F3", alpha=0.15,
+                        label="p10-p90 band")
+
+    # Actual prices (test set)
+    ax.plot(test_dt, actual, color="black", linewidth=1.0, alpha=0.85,
+            label="Actual")
+
+    # Predicted prices (test set)
+    ax.plot(test_dt, predicted, color="#2196F3", linewidth=1.0, alpha=0.85,
+            label="Predicted")
+
+    ax.set_xlabel("Date", fontsize=9 if standalone else 6)
+    ax.set_ylabel("Price (KRW)", fontsize=9 if standalone else 6)
+    ax.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda x, p: f"{x:,.0f}")
+    )
+
+    # X-axis date formatting — reduce tick density for readability
+    locator = AutoDateLocator(minticks=4, maxticks=10)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(DateFormatter("%Y-%m"))
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right",
+             fontsize=7 if standalone else 5)
+    ax.tick_params(axis="y", labelsize=7 if standalone else 5)
+
+    if standalone:
+        ax.set_title(
+            f"{config_id} — Price Prediction\n"
+            f"MAPE={mape:.1f}%, RMSE={rmse:,.0f}",
+            fontsize=11,
+        )
+        ax.legend(loc="upper left", fontsize=8)
+
+        # Inset scatter (lower-right corner)
+        ax_inset = inset_axes(ax, width="22%", height="35%", loc="lower right",
+                              bbox_to_anchor=(-0.01, 0.04, 1, 1),
+                              bbox_transform=ax.transAxes)
+        all_vals = list(actual) + list(predicted)
+        mn_i = min(all_vals)
+        mx_i = max(all_vals)
+        pad_i = (mx_i - mn_i) * 0.05
+        diag_i = np.array([mn_i - pad_i, mx_i + pad_i])
+        ax_inset.plot(diag_i, diag_i, "r--", alpha=0.5, linewidth=0.8)
+        errors_i = np.abs(predicted - actual) / np.maximum(actual, 1) * 100
+        ax_inset.scatter(actual, predicted, c=errors_i, cmap="RdYlGn_r",
+                         s=4, alpha=0.5, vmin=0, vmax=50)
+        ax_inset.set_xlim(diag_i[0], diag_i[1])
+        ax_inset.set_ylim(diag_i[0], diag_i[1])
+        ax_inset.set_aspect("equal")
+        ax_inset.xaxis.set_major_formatter(
+            plt.FuncFormatter(lambda x, p: f"{x/1000:.0f}k")
+        )
+        ax_inset.yaxis.set_major_formatter(
+            plt.FuncFormatter(lambda x, p: f"{x/1000:.0f}k")
+        )
+        ax_inset.tick_params(labelsize=5)
+        ax_inset.set_title("scatter", fontsize=6)
+
+        fig.tight_layout()
+        fig.savefig(save_path, dpi=150)
+        plt.close(fig)
+    else:
+        ax.set_title(
+            f"{config_id}\nMAPE={mape:.1f}%",
+            fontsize=6,
+        )
+        ax.legend(loc="upper left", fontsize=5)
+
+    return {"mape": mape, "rmse": rmse}
+
+
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main():
@@ -673,7 +812,7 @@ def main():
     ctx = build_supply_context(data, n)
     print(f"Supply context: {len(ctx['dates'])} days\n")
 
-    # Prepare combined grid figure
+    # Prepare combined scatter grid figure
     n_configs = len(SPECIES_CONFIGS)
     grid_cols = 4
     grid_rows = (n_configs + grid_cols - 1) // grid_cols  # ceil
@@ -683,6 +822,14 @@ def main():
     axes_flat = axes_grid.flatten()
     # Hide any unused subplots immediately
     for ax in axes_flat[n_configs:]:
+        ax.set_visible(False)
+
+    # Prepare combined timeseries grid figure
+    fig_ts_grid, axes_ts_grid = plt.subplots(
+        grid_rows, grid_cols, figsize=(28, grid_rows * 5), dpi=150
+    )
+    axes_ts_flat = axes_ts_grid.flatten()
+    for ax in axes_ts_flat[n_configs:]:
         ax.set_visible(False)
 
     generated = []
@@ -714,6 +861,7 @@ def main():
             print(f"SKIP (only {len(records)} days)")
             failed.append(config_id)
             axes_flat[cfg_idx].set_visible(False)
+            axes_ts_flat[cfg_idx].set_visible(False)
             continue
 
         prices_raw = np.array([r["price"] for r in records])
@@ -727,47 +875,74 @@ def main():
             print(f"SKIP (only {len(X)} feature rows)")
             failed.append(config_id)
             axes_flat[cfg_idx].set_visible(False)
+            axes_ts_flat[cfg_idx].set_visible(False)
             continue
 
-        result = run_single_split(X, y, prices_raw, method, ol_flags)
+        result = run_single_split(X, y, prices_raw, method, ol_flags, od=od)
 
         if result is None:
             print("SKIP (split too small)")
             failed.append(config_id)
             axes_flat[cfg_idx].set_visible(False)
+            axes_ts_flat[cfg_idx].set_visible(False)
             continue
 
         actual = result["actual"]
         predicted = result["predicted"]
         q10 = result["q10"]
         q90 = result["q90"]
+        test_dates = result["test_dates"]
+        train_tail_dates = result["train_tail_dates"]
+        train_tail_actual = result["train_tail_actual"]
+        split_date = result["split_date"]
 
-        save_path = SCATTER_DIR / f"{config_id}_scatter.png"
-
-        # Standalone plot
+        # ── Scatter plot (standalone + grid) ──────────────────────────
+        scatter_path = SCATTER_DIR / f"{config_id}_scatter.png"
         metrics = generate_scatter(actual, predicted, q10, q90, config_id,
-                                   ax=None, save_path=save_path)
-        # Mini subplot in grid
+                                   ax=None, save_path=scatter_path)
         generate_scatter(actual, predicted, q10, q90, config_id,
                          ax=axes_flat[cfg_idx], save_path=None)
+
+        # ── Time series plot (standalone + grid) ──────────────────────
+        ts_path = SCATTER_DIR / f"{config_id}_timeseries.png"
+        generate_timeseries(
+            test_dates, actual, predicted, q10, q90,
+            train_tail_dates, train_tail_actual, split_date,
+            config_id, ax=None, save_path=ts_path,
+        )
+        generate_timeseries(
+            test_dates, actual, predicted, q10, q90,
+            train_tail_dates, train_tail_actual, split_date,
+            config_id, ax=axes_ts_flat[cfg_idx], save_path=None,
+        )
 
         print(f"MAPE={metrics['mape']:.1f}%  R²={metrics['r2']:.3f}  n={metrics['n']}")
         generated.append(config_id)
 
-    # Finalize grid
+    # Finalize scatter grid
     fig_grid.suptitle("Actual vs Predicted — All 20 Configs", fontsize=16, y=1.002)
     fig_grid.tight_layout()
     grid_path = SCATTER_DIR / "all_configs_scatter_grid.png"
     fig_grid.savefig(grid_path, dpi=150, bbox_inches="tight")
     plt.close(fig_grid)
 
+    # Finalize timeseries grid
+    fig_ts_grid.suptitle("Price Prediction Time Series — All 20 Configs", fontsize=16, y=1.002)
+    fig_ts_grid.tight_layout()
+    ts_grid_path = SCATTER_DIR / "all_configs_timeseries_grid.png"
+    fig_ts_grid.savefig(ts_grid_path, dpi=150, bbox_inches="tight")
+    plt.close(fig_ts_grid)
+
+    n_gen = len(generated)
     print(f"\n{'='*60}")
-    print(f"Generated {len(generated)} individual scatter plots")
+    print(f"Generated {n_gen} individual scatter plots  ({n_gen} files)")
+    print(f"Generated {n_gen} individual timeseries plots ({n_gen} files)")
     if failed:
         print(f"Skipped ({len(failed)}): {', '.join(failed)}")
-    print(f"Combined grid saved to: {grid_path}")
-    print(f"Individual plots in:    {SCATTER_DIR}")
-    print(f"Total plots: {len(generated)} individual + 1 grid = {len(generated) + 1}")
+    print(f"Scatter grid:    {grid_path}")
+    print(f"Timeseries grid: {ts_grid_path}")
+    print(f"Individual plots in: {SCATTER_DIR}")
+    print(f"Total plots: {n_gen * 2} individual + 2 grids = {n_gen * 2 + 2}")
 
 
 if __name__ == "__main__":
