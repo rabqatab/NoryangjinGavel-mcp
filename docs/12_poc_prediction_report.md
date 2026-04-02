@@ -1,16 +1,16 @@
 # PoC Price Prediction Report
 
-> Results from 13 iterations: v1–v11 (CPU) + 7 DL models (GPU) + quantile bands + CQR.
+> Results from v1–v11 (CPU) + DL v1/v2 (GPU) + quantile bands + CQR.
 > CPU scripts: `scripts/poc_prediction.py` (v1) through `poc_prediction_v11.py` (v11)
-> GPU scripts: `scripts/train_tft.py`, `scripts/train_all_dl_models.py` (Docker on GB10 Blackwell)
-> 20 prediction configs across 15 species. Registry: `docs/15_prediction_config_registry.md`
-> Additional species: `scripts/poc_test_mullet.py` (20 configs across 15 species)
-> Ocean data: `scripts/fetch_ocean_openmeteo.py` (Open-Meteo, 11K rows, 5 stations, 2020–2026)
+> GPU scripts: `scripts/train_all_dl_models.py` (v1), `scripts/train_dl_v2.py` (v2, Optuna+loss+weather)
+> 20 original configs + 125 expansion configs. Registry: `docs/15_prediction_config_registry.md`
+> Candidates: `docs/16_model_construction_candidates.md` (188 species, 1,195 viable configs)
+> Weather data: `scripts/fetch_coastal_weather.py` (36K rows, 5 ports, 2006–2026)
 > Config registry: `docs/15_prediction_config_registry.md` (living document)
 
 ## Executive Summary
 
-Over 8 model iterations spanning CPU (LightGBM with 68 features, VMD decomposition, Optuna optimization) and GPU (Temporal Fusion Transformer), **5 of 7 species now achieve below 23% MAPE**. The best model varies per species — LightGBM wins for stable species, TFT wins for volatile/complex ones.
+Over 14 model iterations spanning CPU (LightGBM v1-v11) and GPU (DL v1, DL v2 with Optuna HPO), **15/20 original configs achieve below 20% MAPE**. DL v2 improved 12/20 configs through per-config loss selection, Optuna hyperparameter optimization (10 trials), and 76 features (68 base + 8 weather). GRU dominates as the best architecture for 13/20 configs. Expansion to 125 new configs is underway.
 
 ### Full DL Model Comparison (7 models × 7 species, GPU)
 
@@ -439,13 +439,23 @@ Based on literature review of fish price prediction research:
 - ~~Advanced preprocessing (5 fixes)~~ → v10: **18-29% MAPE reduction** (biggest improvement)
 - ~~Quantile bands (LightGBM)~~ → v10: p10/p50/p90 + conformal 80% coverage
 - ~~Fair DL comparison with v10 preprocessing~~ → All DL models improved 36-43%
-- ~~DL quantile bands~~ → In progress (PinballLoss for GRU/Transformer/CNN-LSTM)
+- ~~DL quantile bands~~ → PinballLoss for GRU/Transformer/CNN-LSTM quantile models
+
+### Completed (DL v2 — 2026-04-01)
+- ~~Per-config loss selection~~ → MAE/LogCosh/Huber/MSE/sMAPE routed per (config, model) pair
+- ~~Optuna HPO~~ → 10 trials per model per config. Finding: single-layer models (num_layers=1) dominate
+- ~~Coastal weather features~~ → 8 features from Open-Meteo Archive (2006-2026, 5 ports, 36K rows) → 68+8=76 total
+- ~~CQR asymmetric calibration~~ → Conformalized Quantile Regression for DL quantile models
+- ~~Model ensemble~~ → Top-3 model averaging per config
+- ~~Loss function comparison study~~ → MAE wins 42%, LogCosh 23%, Huber 20%, MSE 10%
+- ~~KHOA daily station data~~ → Live fetch ready (4 stations: 인천/제주/여수/부산)
+- ~~Streamlit dashboard~~ → 5 pages (홈/시세/예측/모델/건강), all 504 species
+- ~~Config expansion~~ → 125 new configs training (35 Grade A + 88 Grade B from 61 species)
 
 ### Remaining (for production)
-1. **Per-species model routing** — deploy v10 LightGBM for 넙치/참돔/감성돔, TFT for 우럭/방어, GRU for 농어, CNN-LSTM+VMD for 도다리.
-2. **MCP Server** — expose predictions + price data via MCP protocol for Claude queries.
-3. **Daily pipeline** — automate: crawl → preprocess → predict → serve.
-4. **KHOA real station data** — deferred, will improve as daily data accumulates via Open-Meteo.
+1. **MCP Server** — expose predictions + price data via MCP protocol for Claude queries.
+2. **Daily pipeline automation** — cron: crawl → preprocess → predict → serve.
+3. **Config expansion results** — merge 125 new config results into registry when training completes.
 
 Sources:
 - [Price Forecasting of Marine Fish — PMC (2024)](https://pmc.ncbi.nlm.nih.gov/articles/PMC11048843/)

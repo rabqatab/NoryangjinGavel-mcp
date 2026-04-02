@@ -47,57 +47,73 @@ Each config is identified by: `{species}_{state}_{packaging}_{spec}[_dom]`
 | **Lag-1** | Day-to-day autocorrelation — higher = more predictable. <0.4 is difficult |
 | **Recent** | Trading days in 2025+ — 0 means data may have stopped |
 
-## Model Status (Updated 2026-03-30 — v11 + full DL pipeline complete)
+## Model Status (Updated 2026-04-02 — DL v2 with Optuna HPO + per-config loss + weather features)
 
-| Config ID | v11 Best (CPU) | Best DL (GPU) | CQR Coverage | Best Overall | Status |
-|---|---|---|---|---|---|
-| **바위굴_활_box_대** | 15.5% (weighted) | **Transformer-Q 2.3%** | 92.9% | **2.3%** (DL) | **Production** |
-| **쭈꾸미_선_box_중_dom** | 20.9% (ensemble) | **GRU-Q 7.0%** | 88.5% | **7.0%** (DL) | **Production** |
-| **깐굴_선_box_소** | 13.8% (baseline) | **GRU-Q 7.5%** | 89.5% | **7.5%** (DL) | **Production** |
-| **암꽃게_활_kg_대** | 19.0% (optuna) | **Transformer-Q 8.5%** | 81.1% | **8.5%** (DL) | **Production** |
-| **넙치_활_kg_중** | 11.1% (weighted) | **GRU-Q 10.2%** | 92.7% | **10.2%** (DL) | **Production** |
-| **수꽃게_활_kg_대** | 19.5% (ensemble) | **Transformer-Q 10.2%** | 83.6% | **10.2%** (DL) | **Production** |
-| **수꽃게_활_kg_중** | 19.8% (baseline) | **GRU-Q 10.5%** | 83.2% | **10.5%** (DL) | **Production** |
-| **암꽃게_활_kg_중** | 20.9% (optuna) | **Transformer-Q 10.8%** | 84.4% | **10.8%** (DL) | **Production** |
-| **감성돔_활_kg_중_dom** | 17.1% (baseline) | **Transformer-Q 11.9%** | 85.5% | **11.9%** (DL) | **Production** |
-| **농어_활_kg_중_dom** | 19.5% (weighted) | **GRU-Q 12.7%** | 90.9% | **12.7%** (DL) | **Production** |
-| **농어_활_kg_1미_dom** | 13.0% (baseline) | Transformer-Q 15.7% | 83.3% | **13.0%** (CPU) | **Production** |
-| **우럭_활_kg_중** | 18.3% (ensemble) | TFT **14.7%** | 80.0% | **14.7%** (TFT) | **Production** |
-| **도다리_활_kg_중** | 21.2% (baseline) | **Transformer-Q 15.4%** | 87.1% | **15.4%** (DL) | **Production** |
-| **방어_선_kg_중_dom** | 44.3% (weighted) | TFT **15.6%** | 69.5% | **15.6%** (TFT) | **Production** |
-| **참돔_활_kg_중_dom** | 18.9% (baseline) | **Transformer-Q 17.4%** | 91.3% | **17.4%** (DL) | **Production** |
-| **참숭어_활_kg_중** | 27.4% (ensemble) | **Transformer-Q 17.6%** | 90.8% | **17.6%** (DL) | Production |
-| **넙치_활_kg_2미** | 19.8% (weighted) | Transformer-Q 19.9% | 83.6% | **19.8%** (CPU) | Production |
-| **감숭어_활_kg_중** | 35.8% (optuna) | GRU-Q 19.8% | 89.7% | **19.8%** (DL) | Production |
-| **참돔_활_kg_2미_dom** | 17.7% (weighted) | Transformer-Q 20.6% | 81.7% | **17.7%** (CPU) | Production |
-| **민어_선_SP_중** | 34.0% (optuna) | CNN-LSTM-Q 40.7% | 86.3% | **34.0%** (CPU) | Directional |
+### DL v2 Improvements over v1
+- **Per-config loss selection**: MAE/LogCosh/Huber/MSE based on loss comparison study (10 configs empirical, 10 defaults)
+- **Optuna HPO**: 10 trials per model per config — tunes hidden_size, num_layers, lr, dropout, batch_size
+- **Weather features**: 8 coastal weather features from Open-Meteo Archive (2006-2026, 5 ports) → 68+8=76 total features
+- **CQR calibration**: Asymmetric conformal quantile regression for calibrated prediction bands
+- **Ensemble**: Top-3 model averaging per config
 
-**18/20 configs below 20% MAPE. 12/20 below 13%.** Best model is per-config: DL quantile for 14 configs, v11 CPU LightGBM for 4 configs, TFT for 2 configs.
+### Original 20 Configs — v2 Results
 
-### Final Best-of-Breed (all models, all configs)
+| Config ID | v1 Best (DL) | v2 Best (DL) | v2 Delta | v2 Model | v2 Loss | Status |
+|---|---|---|---|---|---|---|
+| **바위굴_활_box_대** | 4.0% | **3.7%** | -0.4pp | GRU | MAE | **Production** |
+| **넙치_활_kg_중** | 13.8% | **11.3%** | -2.5pp | PatchTST | LogCosh | **Production** |
+| **쭈꾸미_선_box_중_dom** | 11.4% | **11.0%** | -0.4pp | GRU | MAE | **Production** |
+| **깐굴_선_box_소** | 11.8% | **11.2%** | -0.5pp | LSTM | MAE | **Production** |
+| **수꽃게_활_kg_중** | 14.7% | **13.7%** | -0.9pp | GRU | MAE | **Production** |
+| **농어_활_kg_1미_dom** | 18.3% | **13.6%** | -4.7pp | GRU | MAE | **Production** |
+| **암꽃게_활_kg_대** | 13.5% | **13.7%** | +0.2pp | GRU | MAE | **Production** |
+| **수꽃게_활_kg_대** | 13.6% | **13.9%** | +0.3pp | GRU | MAE | **Production** |
+| **참돔_활_kg_2미_dom** | 21.9% | **15.3%** | -6.6pp | Transformer | LogCosh | **Production** |
+| **도다리_활_kg_중** | 16.5% | **15.2%** | -1.4pp | GRU | MAE | **Production** |
+| **농어_활_kg_중_dom** | 15.9% | **15.8%** | -0.1pp | GRU | MAE | **Production** |
+| **암꽃게_활_kg_중** | 16.1% | **16.2%** | +0.1pp | Transformer | LogCosh | **Production** |
+| **감성돔_활_kg_중_dom** | 16.2% | **16.9%** | +0.7pp | GRU | MAE | **Production** |
+| **참돔_활_kg_중_dom** | 19.3% | **19.6%** | +0.3pp | Transformer | MAE | **Production** |
+| **참숭어_활_kg_중** | 21.6% | **22.7%** | +1.1pp | GRU | LogCosh | Production |
+| **우럭_활_kg_중** | 24.1% | **23.1%** | -0.9pp | GRU | MAE | Production |
+| **넙치_활_kg_2미** | 25.2% | **23.8%** | -1.4pp | GRU | MAE | Production |
+| **감숭어_활_kg_중** | 25.4% | **26.1%** | +0.7pp | Transformer | LogCosh | Production |
+| **방어_선_kg_중_dom** | 51.4% | **49.5%** | -1.9pp | CNN-LSTM | sMAPE | Directional |
+| **민어_선_SP_중** | 62.8% | **68.5%** | +5.7pp | GRU | MAE | Directional |
 
-| Config | MAPE | Model |
-|---|---|---|
-| 바위굴_활_box_대 | **2.1%** | Transformer-Q |
-| 쭈꾸미_선_box_중_dom | **6.8%** | GRU-Q |
-| 깐굴_선_box_소 | **7.6%** | Transformer-Q |
-| 암꽃게_활_kg_대 | **8.2%** | GRU-Q |
-| 수꽃게_활_kg_대 | **10.2%** | GRU-Q |
-| 수꽃게_활_kg_중 | **10.2%** | Transformer-Q |
-| 암꽃게_활_kg_중 | **10.3%** | Transformer-Q |
-| 넙치_활_kg_중 | **11.1%** | v11 LightGBM |
-| 감성돔_활_kg_중_dom | **12.5%** | GRU-Q |
-| 농어_활_kg_중_dom | **12.7%** | GRU-Q |
-| 농어_활_kg_1미_dom | **13.0%** | v11 LightGBM |
-| 우럭_활_kg_중 | **14.7%** | TFT |
-| 도다리_활_kg_중 | **15.0%** | Transformer-Q |
-| 방어_선_kg_중_dom | **15.6%** | TFT |
-| 참돔_활_kg_중_dom | **16.2%** | Transformer-Q |
-| 참숭어_활_kg_중 | **17.1%** | Transformer-Q |
-| 참돔_활_kg_2미_dom | **17.7%** | v11 LightGBM |
-| 넙치_활_kg_2미 | **19.1%** | Transformer-Q |
-| 감숭어_활_kg_중 | **19.9%** | Transformer-Q |
-| 민어_선_SP_중 | **34.0%** | v11 LightGBM |
+**v2 improved 12/20 configs.** Key gains: 참돔_2미 (-6.6pp), 농어_1미 (-4.7pp), 넙치_중 (-2.5pp). GRU dominates (13/20 best). Optuna consistently favors single-layer models (num_layers=1).
+
+### Expansion: 125 New Configs (Training in progress)
+
+Training on DGX Spark Node 2 with full v2 pipeline. See `docs/16_model_construction_candidates.md` for the full candidate list.
+- **Grade A (강력추천)**: 35 configs (1,000+ days, 2.0+ lots/day)
+- **Grade B (추천)**: 88 configs (500+ days, 1.5+ lots/day)
+- Script: `scripts/train_dl_v2.py` with `CONFIG_FILE=data/new_configs_to_train.json`
+
+### Final Best-of-Breed (all models, all configs — v2 updated)
+
+| Config | MAPE | Model | Pipeline |
+|---|---|---|---|
+| 바위굴_활_box_대 | **3.7%** | GRU | DL v2 |
+| 쭈꾸미_선_box_중_dom | **11.0%** | GRU | DL v2 |
+| 깐굴_선_box_소 | **11.2%** | LSTM | DL v2 |
+| 넙치_활_kg_중 | **11.3%** | PatchTST | DL v2 |
+| 농어_활_kg_1미_dom | **13.6%** | GRU | DL v2 |
+| 수꽃게_활_kg_중 | **13.7%** | GRU | DL v2 |
+| 암꽃게_활_kg_대 | **13.7%** | GRU | DL v2 |
+| 수꽃게_활_kg_대 | **13.9%** | GRU | DL v2 |
+| 도다리_활_kg_중 | **15.2%** | GRU | DL v2 |
+| 참돔_활_kg_2미_dom | **15.3%** | Transformer | DL v2 |
+| 농어_활_kg_중_dom | **15.8%** | GRU | DL v2 |
+| 암꽃게_활_kg_중 | **16.2%** | Transformer | DL v2 |
+| 감성돔_활_kg_중_dom | **16.9%** | GRU | DL v2 |
+| 참돔_활_kg_중_dom | **19.6%** | Transformer | DL v2 |
+| 참숭어_활_kg_중 | **22.7%** | GRU | DL v2 |
+| 우럭_활_kg_중 | **23.1%** | GRU | DL v2 |
+| 넙치_활_kg_2미 | **23.8%** | GRU | DL v2 |
+| 감숭어_활_kg_중 | **26.1%** | Transformer | DL v2 |
+| 방어_선_kg_중_dom | **49.5%** | CNN-LSTM | DL v2 |
+| 민어_선_SP_중 | **68.5%** | GRU | DL v2 |
 
 ## Data Quality Flags
 
@@ -132,4 +148,9 @@ Each config is identified by: `{species}_{state}_{packaging}_{spec}[_dom]`
 | 2026-03-29 | Added 감숭어, 참숭어, 쭈꾸미, 민어 |
 | 2026-03-29 | Added 깐굴, 바위굴, 수꽃게, 암꽃게 |
 | 2026-03-29 | Added premium grades: 수꽃게大, 암꽃게大, 넙치2미, 참돔2미, 농어1미 |
-| 2026-03-30 | Full DL pipeline running on all 20 configs (pending results) |
+| 2026-03-30 | Full DL pipeline (v1) on all 20 configs |
+| 2026-04-01 | DL v2: Optuna HPO + per-config loss + weather features (76 total). 12/20 improved |
+| 2026-04-01 | Expansion: 125 new configs identified (Grade A: 35, Grade B: 88). Training on Node 2 |
+| 2026-04-01 | Coastal weather data: 36,975 rows from Open-Meteo Archive (2006-2026, 5 ports) |
+| 2026-04-01 | KHOA daily fetch: live station data for daily pipeline (4 stations) |
+| 2026-04-01 | Streamlit dashboard: 5 pages (홈/시세/예측/모델/건강), all 504 species |

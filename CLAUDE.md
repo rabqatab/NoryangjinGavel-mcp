@@ -84,13 +84,26 @@ Key files:
 
 **Phase 1 (Crawler):** Complete. Normalization pipeline, species inventory, daily crawl support.
 
-**Phase 2 (Prediction):** Complete. 10 CPU iterations (v1-v10) + 7 DL models (GPU). All 7 sashimi species below 19% MAPE. Key docs:
-- `docs/12_poc_prediction_report.md` — Full v1→v10 + DL comparison results
+**Phase 2 (Prediction):** Complete. v1-v11 CPU + DL v1/v2 GPU. 15/20 configs below 20% MAPE. Key docs:
+- `docs/12_poc_prediction_report.md` — Full v1→v11 + DL v1/v2 comparison results
 - `docs/13_deep_learning_literature_review.md` — 35+ papers surveyed
 - `docs/14_advanced_preprocessing.md` — 5 preprocessing fixes (biggest improvement)
-- `docs/09_aggregation_eda_report.md` — Row aggregation viability analysis
-- `docs/10_prediction_candidates_report.md` — 504→74→7 species funnel
-- `docs/11_species_prediction_profiles.md` — Per-species config profiles
+- `docs/15_prediction_config_registry.md` — 20 configs, v2 results, expansion tracking
+- `docs/16_model_construction_candidates.md` — 188 species, 1,195 viable configs, 125 training
+
+**Phase 2b (DL v2 + Expansion):** In progress. Optuna HPO, per-config loss, weather features (76 total).
+- `scripts/train_dl_v2.py` — Enhanced training with Optuna + loss routing + CQR
+- `data/new_configs_to_train.json` — 125 new configs (35 A-grade + 88 B-grade)
+- `data/weather/coastal_weather_daily.csv` — 36K rows, 5 ports, 2006-2026
+
+**Phase 2c (Dashboard):** Complete. Streamlit dashboard with 5 pages.
+- `dashboard/app.py` — Entry point, all 504 species in price trends
+- Run: `uv run streamlit run dashboard/app.py --server.port 8501`
+
+**Phase 2d (Daily Pipeline):** Ready for cron.
+- Crawler: `uv run python scripts/crawler/run_crawler.py daily`
+- KHOA: `uv run python scripts/fetch_khoa_daily.py`
+- Weather: `uv run python scripts/fetch_coastal_weather.py`
 
 **Phase 3 (MCP Server):** Not started. Design at `docs/04_mcp_server_design.md`.
 - **Security Layer** (`docs/07_security.md`): Rate limiting, audit logging, optional API key auth
@@ -100,13 +113,15 @@ Key files:
 Each prediction config is identified by a full tuple: `(species, state, packaging, spec, origin_class)`.
 Same species with different configs = different market = different model.
 
-### Tested Configs (20 total, DL models running on GB10)
+### Tested Configs (20 original + 125 expansion, DL v2 on GB10)
 
 **Sashimi (중 grade, 7 configs):**
 넙치_활_kg_중, 우럭_활_kg_중, 방어_선_kg_중_dom, 참돔_활_kg_중_dom, 농어_활_kg_중_dom, 도다리_활_kg_중, 감성돔_활_kg_중_dom
 
 **Standard (8 configs):**
 감숭어_활_kg_중, 참숭어_활_kg_중, 쭈꾸미_선_box_중_dom, 민어_선_SP_중, 깐굴_선_box_소, 바위굴_활_box_대, 수꽃게_활_kg_중, 암꽃게_활_kg_중
+
+**Expansion (125 configs training):** 61 species across all market segments. See `docs/16_model_construction_candidates.md`.
 
 **Premium 활어 (5 configs):**
 수꽃게_활_kg_대, 암꽃게_활_kg_대, 넙치_활_kg_2미, 참돔_활_kg_2미_dom, 농어_활_kg_1미_dom

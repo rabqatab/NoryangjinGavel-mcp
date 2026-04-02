@@ -19,5 +19,11 @@ COPY scripts/ scripts/
 COPY data/parquet/ data/parquet/
 COPY crawler/species_inventory.json crawler/
 
-# Default: run TFT training
-CMD ["python", "scripts/train_tft.py"]
+# Copy result files needed for v2 (loss comparison routing)
+COPY data/poc_results/ data/poc_results/
+
+# Copy weather data for v2 feature integration
+COPY data/weather/ data/weather/
+
+# Default: run DL v2 training
+CMD ["python", "scripts/train_dl_v2.py"]
