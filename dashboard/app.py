@@ -33,6 +33,7 @@ pages = [
     st.Page("pages/2_predictions.py", title="예측 결과", icon="\U0001F52E"),
     st.Page("pages/3_model_performance.py", title="모델 성능", icon="\U0001F4CA"),
     st.Page("pages/4_data_health.py", title="데이터 건강", icon="\U0001F3E5"),
+    st.Page("pages/5_price_chain.py", title="소비자 가격", icon="\U0001F4B0"),
 ]
 
 pg = st.navigation(pages)
