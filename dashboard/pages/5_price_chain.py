@@ -210,4 +210,44 @@ st.info(
 )
 
 st.markdown("---")
-st.caption("참고: 유통비용률은 해양수산부 수산물 유통산업실태조사 기반 추정치이며, 실제 가격은 시기·지역·품질에 따라 다를 수 있습니다.")
+
+# ── KAMIS Retail Reference (API data) ─────────────────────────────
+st.subheader("KAMIS 공식 소매가격 (참고)")
+st.caption("한국농수산식품유통공사(KAMIS) Open API에서 제공하는 수산물 소매가격. API 제공 품목이 제한적입니다.")
+
+# KAMIS API provides retail data for limited seafood items
+# Data source: yearlySalesList, category 600, yearly avg 2024
+KAMIS_RETAIL = {
+    "마른멸치 (대멸)": {"wholesale": 13991, "retail": 23190, "unit": "1kg", "code": 638},
+    "마른미역": {"wholesale": 13984, "retail": 30930, "unit": "1kg", "code": 642},
+    "굴": {"wholesale": 13899, "retail": 21165, "unit": "1kg", "code": 644},
+    "가리비 (홍가리비)": {"wholesale": None, "retail": 7868, "unit": "1kg", "code": 659},
+    "건다시마": {"wholesale": None, "retail": 37470, "unit": "1kg", "code": 660},
+    "홍합 (깐)": {"wholesale": None, "retail": 27440, "unit": "1kg", "code": 658},
+    "홍합 (안깐)": {"wholesale": None, "retail": 4062, "unit": "1kg", "code": 658},
+}
+
+kamis_rows = []
+for name, info in KAMIS_RETAIL.items():
+    ws = info["wholesale"]
+    rt = info["retail"]
+    markup = f"x{rt/ws:.1f}" if ws else "-"
+    kamis_rows.append({
+        "품목": name,
+        "중도매 판매가": f"{ws:,}원" if ws else "-",
+        "소매가격": f"{rt:,}원",
+        "배수": markup,
+        "출처": "KAMIS API (2024 평균)",
+    })
+
+st.dataframe(pd.DataFrame(kamis_rows), use_container_width=True, hide_index=True)
+
+st.warning(
+    "KAMIS Open API는 수산물 소매가격을 7개 품목만 제공합니다. "
+    "주요 활어(넙치, 우럭, 방어, 참돔 등)의 소매가격은 API에서 제공되지 않아 "
+    "해양수산부 유통비용률 기반으로 추정합니다."
+)
+
+st.markdown("---")
+st.caption("출처: 해양수산부 수산물 유통산업실태조사, KAMIS Open API (kamis.or.kr)")
+st.caption("유통비용률은 추정치이며, 실제 가격은 시기·지역·품질에 따라 다를 수 있습니다.")
