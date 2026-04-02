@@ -10,7 +10,18 @@
 
 ## Executive Summary
 
-Over 14 model iterations spanning CPU (LightGBM v1-v11) and GPU (DL v1, DL v2 with Optuna HPO), **15/20 original configs achieve below 20% MAPE**. DL v2 improved 12/20 configs through per-config loss selection, Optuna hyperparameter optimization (10 trials), and 76 features (68 base + 8 weather). GRU dominates as the best architecture for 13/20 configs. Expansion to 125 new configs is underway.
+Over 14 model iterations spanning CPU (LightGBM v1-v11) and GPU (DL v1/v2 with Optuna HPO), **77/145 configs achieve below 20% MAPE** across 61 species. DL v2 adds per-config loss selection, Optuna HPO (10 trials), 76 features (68 base + 8 weather), and CQR calibration. GRU dominates as the best architecture (winning 109/145 configs). 22 configs achieve under 10% MAPE — production-grade accuracy.
+
+### Summary Statistics (145 configs, DL v2)
+
+| Tier | MAPE | Configs | % |
+|---|---|---|---|
+| **A (Excellent)** | < 10% | 22 | 15% |
+| **B (Good)** | 10-20% | 55 | 38% |
+| **C (Usable)** | 20-30% | 10 | 7% |
+| **D (Directional)** | 30%+ | 58 | 40% |
+
+**Top 5:** 토바지락 (0.1%), 아귀_냉 (0.2%), 쭈꾸미_대 (2.5%), 낙지_20미 (3.3%), 봉바지락 (3.5%)
 
 ### Full DL Model Comparison (7 models × 7 species, GPU)
 
@@ -455,7 +466,7 @@ Based on literature review of fish price prediction research:
 ### Remaining (for production)
 1. **MCP Server** — expose predictions + price data via MCP protocol for Claude queries.
 2. **Daily pipeline automation** — cron: crawl → preprocess → predict → serve.
-3. **Config expansion results** — merge 125 new config results into registry when training completes.
+3. **Dashboard enhancement** — integrate 145-config results into Streamlit dashboard.
 
 Sources:
 - [Price Forecasting of Marine Fish — PMC (2024)](https://pmc.ncbi.nlm.nih.gov/articles/PMC11048843/)

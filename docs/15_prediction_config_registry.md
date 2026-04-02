@@ -83,12 +83,80 @@ Each config is identified by: `{species}_{state}_{packaging}_{spec}[_dom]`
 
 **v2 improved 12/20 configs.** Key gains: 참돔_2미 (-6.6pp), 농어_1미 (-4.7pp), 넙치_중 (-2.5pp). GRU dominates (13/20 best). Optuna consistently favors single-layer models (num_layers=1).
 
-### Expansion: 125 New Configs (Training in progress)
+### Expansion: 125 New Configs (Complete — 2026-04-02)
 
-Training on DGX Spark Node 2 with full v2 pipeline. See `docs/16_model_construction_candidates.md` for the full candidate list.
-- **Grade A (강력추천)**: 35 configs (1,000+ days, 2.0+ lots/day)
-- **Grade B (추천)**: 88 configs (500+ days, 1.5+ lots/day)
-- Script: `scripts/train_dl_v2.py` with `CONFIG_FILE=data/new_configs_to_train.json`
+Full v2 pipeline on DGX Spark Node 2. Results merged into `data/poc_results/dl_v2_merged.json`.
+
+**145 total configs (20 original + 125 new):**
+
+| Tier | MAPE Range | Count | Description |
+|---|---|---|---|
+| **A** | < 10% | 22 | Production-ready, high confidence |
+| **B** | 10-20% | 55 | Production-ready, good accuracy |
+| **C** | 20-30% | 10 | Usable with caveats |
+| **D** | 30%+ | 58 | Directional only or not viable |
+
+**77 configs (53%) below 20% MAPE — production viable.**
+
+### Tier A — Best Performers (MAPE < 10%)
+
+| Config | MAPE | Model | Loss |
+|---|---|---|---|
+| 토바지락_활_box_대 | **0.1%** | LSTM | MAE |
+| 아귀_냉_CTBT_중 | **0.2%** | CNN-LSTM | MAE |
+| 쭈꾸미_선_box_대 | **2.5%** | CNN-LSTM | MAE |
+| 낙지_활_그물망_20미 | **3.3%** | GRU | MAE |
+| 봉바지락_활_box_대_dom | **3.5%** | BiLSTM+Attn | MAE |
+| 바위굴_활_box_대 | **3.7%** | GRU | MAE |
+| 멸치_선_SP_중 | **3.9%** | LSTM | MAE |
+| 도루묵_선_SP_40미 | **4.2%** | GRU | MAE |
+| 수꽃게_활_kg_특대 | **4.2%** | GRU | MAE |
+| 오징어_선_cs상자_20미 | **4.3%** | GRU | MAE |
+| 쭈꾸미_선_box_10코 | **4.8%** | GRU | MAE |
+| 가리비_활_box_중 | **5.7%** | GRU | MAE |
+| 깐해락_선_box_소 | **5.9%** | GRU | MAE |
+| 새조개_활_box_중 | **6.2%** | GRU | MAE |
+| 오징어_냉_SP_20미 | **6.5%** | GRU | MAE |
+| 병어_선_SP_42미 | **6.6%** | GRU | MAE |
+| 오징어_선_SP_소 | **6.9%** | GRU | MAE |
+| 방어_활_미마리_중 | **7.3%** | GRU | MAE |
+| 쭈꾸미_선_그물망_소 | **7.5%** | GRU | MAE |
+| 오징어_선_SP_25미 | **8.6%** | GRU | MAE |
+| 쭈꾸미_활_그물망_소 | **8.8%** | GRU | MAE |
+| 소라_활_그물망_대 | **9.5%** | CNN-LSTM | MAE |
+
+### Tier B — Production Ready (MAPE 10-20%)
+
+| Config | MAPE | Model | Config | MAPE | Model |
+|---|---|---|---|---|---|
+| 문어_활_kg_중 | 10.3% | GRU | 깐바지락_선_box_소 | 12.6% | GRU |
+| 진주담치_활_그물망_대 | 10.7% | GRU | 꼴뚜기_선_box_소 | 12.9% | GRU |
+| 돌게_활_kg_중 | 10.9% | GRU | 전어_활_kg_중 | 12.9% | GRU |
+| 가무락_활_그물망_대 | 10.9% | GRU | 오징어_선_SP_20미 | 13.3% | GRU |
+| 쭈꾸미_선_box_중_dom | 11.0% | GRU | 수꽃게_활_kg_대중 | 13.4% | GRU |
+| 깐굴_선_box_소 | 11.2% | LSTM | 농어_활_kg_1미_dom | 13.6% | GRU |
+| 넙치_활_kg_중 | 11.3% | PatchTST | 암꽃게_활_kg_대 | 13.7% | GRU |
+| 물바지락_활_box_2봉 | 11.4% | GRU | 수꽃게_활_kg_중 | 13.7% | GRU |
+| 갑오징어_선_SP_2미 | 11.8% | GRU | 수꽃게_활_kg_대 | 13.9% | GRU |
+| 수꽃게_활_kg_소 | 11.9% | GRU | 전어_선_kg_중 | 14.1% | GRU |
+| 겉바지락_활_그물망_대 | 11.9% | GRU | 해삼_활_box_소 | 14.4% | GRU |
+| 오징어_선_SP_중 | 12.3% | GRU | 매생이_선_box_중 | 14.7% | CNN-LSTM |
+| 소라_활_box_대 | 12.4% | GRU | 소라_활_그물망_중 | 14.7% | GRU |
+| 만디_선_box_2봉 | 12.5% | GRU | 물바지락_활_box_대 | 15.0% | GRU |
+| 갑오징어_선_SP_3미 | 15.0% | GRU | 감성돔_활_kg_중_dom | 16.9% | GRU |
+| 우럭_선_kg_중 | 15.1% | GRU | 진주담치_활_그물망_중 | 17.0% | GRU |
+| 도다리_활_kg_중 | 15.2% | GRU | 분홍새우_선_SP_대 | 17.1% | PatchTST |
+| 참돔_활_kg_2미_dom | 15.3% | Transformer | 깐홍합_선_box_소 | 17.2% | GRU |
+| 농어_활_kg_중_dom | 15.8% | GRU | 동죽_활_box_소 | 17.6% | Transformer |
+| 수꽃게_선_SP_중 | 16.0% | GRU | 메지_활_미마리_중 | 18.0% | CNN-LSTM |
+| 물메기_선_kg_2미 | 16.0% | GRU | 새꼬막_활_포_소 | 18.0% | Transformer |
+| 암꽃게_활_kg_중 | 16.2% | Transformer | 피꼬막_활_그물망_중 | 18.1% | Transformer |
+| 칼바지락_활_box_대 | 16.6% | GRU | 대포오징어_선_SP_대 | 18.1% | GRU |
+| 키조개_선_box_대 | 16.6% | GRU | 암꽃게_활_kg_소 | 18.6% | CNN-LSTM |
+| 갑오징어_선_kg_중 | 18.7% | GRU | 민어_활_kg_중 | 19.0% | GRU |
+| 만디_선_box_소 | 18.9% | GRU | 물메기_선_kg_3미 | 19.1% | GRU |
+| 참돔_활_kg_중_dom | 19.6% | Transformer | 암꽃게_선_SP_중 | 19.6% | GRU |
+| 가무락_활_그물망_중 | 19.8% | GRU | | | |
 
 ### Final Best-of-Breed (all models, all configs — v2 updated)
 
@@ -150,7 +218,8 @@ Training on DGX Spark Node 2 with full v2 pipeline. See `docs/16_model_construct
 | 2026-03-29 | Added premium grades: 수꽃게大, 암꽃게大, 넙치2미, 참돔2미, 농어1미 |
 | 2026-03-30 | Full DL pipeline (v1) on all 20 configs |
 | 2026-04-01 | DL v2: Optuna HPO + per-config loss + weather features (76 total). 12/20 improved |
-| 2026-04-01 | Expansion: 125 new configs identified (Grade A: 35, Grade B: 88). Training on Node 2 |
+| 2026-04-01 | Expansion: 125 new configs identified (Grade A: 35, Grade B: 88) |
+| 2026-04-02 | Expansion complete: 145 total configs. 77 below 20% MAPE (53%). 22 below 10% |
 | 2026-04-01 | Coastal weather data: 36,975 rows from Open-Meteo Archive (2006-2026, 5 ports) |
 | 2026-04-01 | KHOA daily fetch: live station data for daily pipeline (4 stations) |
 | 2026-04-01 | Streamlit dashboard: 5 pages (홈/시세/예측/모델/건강), all 504 species |

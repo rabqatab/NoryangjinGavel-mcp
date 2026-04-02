@@ -91,9 +91,9 @@ Key files:
 - `docs/15_prediction_config_registry.md` — 20 configs, v2 results, expansion tracking
 - `docs/16_model_construction_candidates.md` — 188 species, 1,195 viable configs, 125 training
 
-**Phase 2b (DL v2 + Expansion):** In progress. Optuna HPO, per-config loss, weather features (76 total).
-- `scripts/train_dl_v2.py` — Enhanced training with Optuna + loss routing + CQR
-- `data/new_configs_to_train.json` — 125 new configs (35 A-grade + 88 B-grade)
+**Phase 2b (DL v2 + Expansion):** Complete. 145 configs total, 77 below 20% MAPE, 22 below 10%.
+- `scripts/train_dl_v2.py` — Optuna HPO + per-config loss routing + CQR + 76 features
+- `data/poc_results/dl_v2_merged.json` — All 145 config results
 - `data/weather/coastal_weather_daily.csv` — 36K rows, 5 ports, 2006-2026
 
 **Phase 2c (Dashboard):** Complete. Streamlit dashboard with 5 pages.
