@@ -211,41 +211,107 @@ st.info(
 
 st.markdown("---")
 
-# ── KAMIS Retail Reference (API data) ─────────────────────────────
-st.subheader("KAMIS 공식 소매가격 (참고)")
-st.caption("한국농수산식품유통공사(KAMIS) Open API에서 제공하는 수산물 소매가격. API 제공 품목이 제한적입니다.")
+# ── KAMIS Wholesale vs Retail Time Series ─────────────────────────
+st.subheader("KAMIS 도매 vs 소매 실측 가격 추이")
+st.caption("한국농수산식품유통공사(KAMIS) Open API 실측 데이터 — 중도매인 판매가 vs 소매가격 일별 비교")
 
-# KAMIS API provides retail data for limited seafood items
-# Data source: yearlySalesList, category 600, yearly avg 2024
-KAMIS_RETAIL = {
-    "마른멸치 (대멸)": {"wholesale": 13991, "retail": 23190, "unit": "1kg", "code": 638},
-    "마른미역": {"wholesale": 13984, "retail": 30930, "unit": "1kg", "code": 642},
-    "굴": {"wholesale": 13899, "retail": 21165, "unit": "1kg", "code": 644},
-    "가리비 (홍가리비)": {"wholesale": None, "retail": 7868, "unit": "1kg", "code": 659},
-    "건다시마": {"wholesale": None, "retail": 37470, "unit": "1kg", "code": 660},
-    "홍합 (깐)": {"wholesale": None, "retail": 27440, "unit": "1kg", "code": 658},
-    "홍합 (안깐)": {"wholesale": None, "retail": 4062, "unit": "1kg", "code": 658},
-}
+import csv
+from pathlib import Path
 
-kamis_rows = []
-for name, info in KAMIS_RETAIL.items():
-    ws = info["wholesale"]
-    rt = info["retail"]
-    markup = f"x{rt/ws:.1f}" if ws else "-"
-    kamis_rows.append({
-        "품목": name,
-        "중도매 판매가": f"{ws:,}원" if ws else "-",
-        "소매가격": f"{rt:,}원",
-        "배수": markup,
-        "출처": "KAMIS API (2024 평균)",
-    })
+kamis_csv = Path(__file__).parent.parent.parent / "data" / "kamis" / "kamis_seafood_daily.csv"
 
-st.dataframe(pd.DataFrame(kamis_rows), use_container_width=True, hide_index=True)
+if kamis_csv.exists():
+    kamis_df = pd.read_csv(kamis_csv)
+    kamis_df["date_dt"] = pd.to_datetime(kamis_df["date"], format="%Y.%m.%d")
+    kamis_df["price_num"] = kamis_df["price"].str.replace(",", "").astype(float)
+
+    kamis_items = sorted(kamis_df["item_name"].unique())
+    selected_kamis = st.selectbox("KAMIS 품목 선택", kamis_items, key="kamis_item")
+
+    sub_k = kamis_df[kamis_df["item_name"] == selected_kamis]
+    retail_k = sub_k[sub_k["type"] == "retail"].sort_values("date_dt")
+    wholesale_k = sub_k[sub_k["type"] == "wholesale"].sort_values("date_dt")
+
+    fig_kamis = go.Figure()
+    if not retail_k.empty:
+        fig_kamis.add_trace(go.Scatter(
+            x=retail_k["date_dt"], y=retail_k["price_num"],
+            name="소매가격", mode="lines",
+            line=dict(color="#d62728", width=2),
+        ))
+    if not wholesale_k.empty:
+        fig_kamis.add_trace(go.Scatter(
+            x=wholesale_k["date_dt"], y=wholesale_k["price_num"],
+            name="중도매인 판매가", mode="lines",
+            line=dict(color="#1f77b4", width=2),
+        ))
+    if not retail_k.empty and not wholesale_k.empty:
+        # Fill between
+        fig_kamis.add_trace(go.Scatter(
+            x=retail_k["date_dt"], y=retail_k["price_num"],
+            fill=None, mode="lines", line=dict(width=0), showlegend=False,
+        ))
+        fig_kamis.add_trace(go.Scatter(
+            x=wholesale_k["date_dt"], y=wholesale_k["price_num"],
+            fill="tonexty", mode="lines", line=dict(width=0),
+            fillcolor="rgba(255,127,14,0.15)", name="유통 마진",
+        ))
+
+    fig_kamis.update_layout(
+        **PLOTLY_LAYOUT,
+        title=f"{selected_kamis} — 도매 vs 소매 가격 추이 (KAMIS 실측)",
+        yaxis_title="가격 (원/kg)",
+        height=450,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig_kamis, use_container_width=True)
+
+    # Markup stats
+    if not retail_k.empty and not wholesale_k.empty:
+        merged_k = pd.merge(
+            retail_k[["date_dt", "price_num"]].rename(columns={"price_num": "retail"}),
+            wholesale_k[["date_dt", "price_num"]].rename(columns={"price_num": "wholesale"}),
+            on="date_dt",
+        )
+        if not merged_k.empty:
+            merged_k["markup"] = merged_k["retail"] / merged_k["wholesale"]
+            merged_k["gap"] = merged_k["retail"] - merged_k["wholesale"]
+
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("평균 마크업", f"x{merged_k['markup'].mean():.2f}")
+            mc2.metric("최근 마크업", f"x{merged_k['markup'].iloc[-1]:.2f}")
+            mc3.metric("평균 가격 차이", f"{merged_k['gap'].mean():,.0f}원")
+            mc4.metric("조사 기간", f"{len(merged_k)}일")
+
+    # Summary table for all items
+    st.markdown("---")
+    st.subheader("KAMIS 전체 품목 도매/소매 비교")
+
+    kamis_summary = []
+    for item_name in kamis_items:
+        sub_item = kamis_df[kamis_df["item_name"] == item_name]
+        r = sub_item[sub_item["type"] == "retail"]["price_num"]
+        w = sub_item[sub_item["type"] == "wholesale"]["price_num"]
+        r_avg = r.mean() if not r.empty else None
+        w_avg = w.mean() if not w.empty else None
+        markup = r_avg / w_avg if r_avg and w_avg and w_avg > 0 else None
+        kamis_summary.append({
+            "품목": item_name,
+            "소매 평균가": f"{r_avg:,.0f}원" if r_avg else "-",
+            "도매 평균가": f"{w_avg:,.0f}원" if w_avg else "-",
+            "마크업": f"x{markup:.2f}" if markup else "-",
+            "조사일수": len(sub_item[sub_item["type"] == "retail"]["date"].unique()),
+        })
+
+    st.dataframe(pd.DataFrame(kamis_summary), use_container_width=True, hide_index=True)
+
+else:
+    st.info("KAMIS 일별 데이터가 없습니다. `data/kamis/kamis_seafood_daily.csv`를 확인해 주세요.")
 
 st.warning(
-    "KAMIS Open API는 수산물 소매가격을 7개 품목만 제공합니다. "
+    "KAMIS Open API는 수산물 소매가격을 6개 품목만 제공합니다. "
     "주요 활어(넙치, 우럭, 방어, 참돔 등)의 소매가격은 API에서 제공되지 않아 "
-    "해양수산부 유통비용률 기반으로 추정합니다."
+    "위 추정치 섹션을 참고해 주세요."
 )
 
 st.markdown("---")
